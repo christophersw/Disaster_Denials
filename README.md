@@ -155,6 +155,12 @@ not see (`source_pdf`, `report_type`, `url`, `posted_date`, `parser_model`,
 `per_capita_impact`, `requested_ia`, `requested_pa`, `granted_ia`, `granted_pa`,
 `source`. (`fips` is added in Phase 2, not by the model.)
 
+> CSV note: boolean columns are written as Python's `True`/`False` strings and
+> nulls as empty cells. Downstream loaders (pandas `read_csv`, R `readr`) should
+> cast booleans explicitly. The writer appends counties first and the report row
+> last, so any report present in `reports.csv` is guaranteed to have its county
+> rows on disk (the resume key is `reports.csv`).
+
 ## 3. Resolve & join (Phase 2)
 
 - **County → FIPS.** Resolve each `report_counties.county_name` to a FIPS code

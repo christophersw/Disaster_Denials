@@ -133,5 +133,9 @@ def extract_report(client: anthropic.Anthropic, pdf_bytes: bytes) -> PdaReport:
         pydantic.ValidationError: if the response does not match the schema.
     """
     response = client.messages.create(**build_request(pdf_bytes))
-    text = next(block.text for block in response.content if block.type == "text")
+    text = next(
+        (block.text for block in response.content if block.type == "text"), None)
+    if text is None:
+        raise ValueError(
+            f"No text block in response (stop_reason={response.stop_reason})")
     return PdaReport.model_validate_json(text)

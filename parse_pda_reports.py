@@ -68,11 +68,25 @@ def main(argv: list[str] | None = None) -> int:
             }
             report_row, county_rows = flatten(
                 report, pdf_path, provenance_for(pdf_path, manifest), meta)
-            append_rows(REPORTS_CSV, REPORT_COLUMNS, [report_row])
+            # Write the county rows first and the report row last: reports.csv is
+            # the resume marker (done_source_pdfs reads it), so writing it last
+            # guarantees that any PDF marked done already has its county rows on
+            # disk — no silently-missing counties. A crash strictly between these
+            # two writes can leave county rows for a not-yet-done PDF, which the
+            # rerun re-appends; detect such rare duplicates by grouping on
+            # source_pdf if needed.
             append_rows(COUNTIES_CSV, COUNTY_COLUMNS, county_rows)
+            append_rows(REPORTS_CSV, REPORT_COLUMNS, [report_row])
             flag = " [needs_review]" if report.needs_review else ""
             print(f"[{index}/{len(pdfs)}] OK {pdf_path}{flag}")
             ok += 1
+        except (anthropic.AuthenticationError,
+                anthropic.PermissionDeniedError) as error:
+            # These fail identically for every PDF — abort instead of burning
+            # through the whole corpus logging the same credential error.
+            print(f"Aborting: credential error on {pdf_path}: {error}",
+                  file=sys.stderr)
+            return 2
         except Exception as error:  # noqa: BLE001 — keep going on any one failure
             print(f"[{index}/{len(pdfs)}] FAIL {pdf_path}: {error}",
                   file=sys.stderr)
