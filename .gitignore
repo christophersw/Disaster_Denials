@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# FEMA PDA data (downloaded PDFs + manifest) — large, regenerable
+data/pdfs/
+.claude/
