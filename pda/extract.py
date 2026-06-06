@@ -18,6 +18,13 @@ from pda.schema import PdaReport, json_schema
 
 MODEL = "claude-opus-4-8"
 
+# The model returns its answer by calling this tool. We use non-strict tool use
+# (not structured outputs / output_config.format) because the structured-output
+# schema compiler caps union-typed parameters at 16, and our schema has ~41
+# nullable fields. Tool use does not compile the schema, so the cap doesn't
+# apply; we re-validate the tool input with Pydantic instead.
+TOOL_NAME = "record_pda_report"
+
 SYSTEM_PROMPT = """\
 You are a meticulous data-extraction assistant. You are given one FEMA \
 Preliminary Damage Assessment (PDA) report as a PDF. Return the fields defined \
@@ -78,7 +85,8 @@ return only raw facts.\
 """
 
 USER_INSTRUCTION = (
-    "Extract this FEMA PDA report. Return JSON matching the schema exactly."
+    "Extract this FEMA PDA report by calling the record_pda_report tool with "
+    "every field filled in (use null where a value is absent)."
 )
 
 
@@ -114,10 +122,15 @@ def build_request(pdf_bytes: bytes) -> dict:
                 {"type": "text", "text": USER_INSTRUCTION},
             ],
         }],
-        "output_config": {
-            "format": {"type": "json_schema", "schema": json_schema()},
-            "effort": "high",
-        },
+        "tools": [{
+            "name": TOOL_NAME,
+            "description": (
+                "Record the structured data extracted from one FEMA PDA report."
+            ),
+            "input_schema": json_schema(),
+        }],
+        "tool_choice": {"type": "auto"},
+        "output_config": {"effort": "high"},
     }
 
 
@@ -133,9 +146,10 @@ def extract_report(client: anthropic.Anthropic, pdf_bytes: bytes) -> PdaReport:
         pydantic.ValidationError: if the response does not match the schema.
     """
     response = client.messages.create(**build_request(pdf_bytes))
-    text = next(
-        (block.text for block in response.content if block.type == "text"), None)
-    if text is None:
+    tool_use = next(
+        (block for block in response.content
+         if block.type == "tool_use" and block.name == TOOL_NAME), None)
+    if tool_use is None:
         raise ValueError(
-            f"No text block in response (stop_reason={response.stop_reason})")
-    return PdaReport.model_validate_json(text)
+            f"Model did not call {TOOL_NAME} (stop_reason={response.stop_reason})")
+    return PdaReport.model_validate(tool_use.input)
