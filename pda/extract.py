@@ -8,6 +8,7 @@ Description: Build and send the structured-output request for one PDA report
     cached prefix; the PDF is the per-request tail.
 Changelog:
     2026-06-05  Initial version.
+    2026-06-06  Treat "UNK"/"Unknown" as null for number fields (not just -/N/A).
 """
 
 import base64
@@ -45,8 +46,9 @@ not requested; set its *_requested flag false and all its numbers null.
 - Numbered footnotes at the bottom are legal boilerplate. Ignore them.
 
 Extraction rules:
-- Numbers: strip "$", "%", and thousands separators and return a number. A dash \
-"-" or "N/A" means there is no value: return null. Never coerce "-" to 0.
+- Numbers: strip "$", "%", and thousands separators and return a number. A \
+missing-value marker — "-", "N/A", "UNK", "UNK.", or "Unknown" (in any case) — \
+means there is no value: return null. Never coerce a missing-value marker to 0.
 - Dates: return as YYYY-MM-DD.
 - report_outcome: "Declared", "Denied", or "Denial of Appeal" from the outcome \
 line. decision_date: the date on that line.

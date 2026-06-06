@@ -151,8 +151,9 @@ an hour (24h ceiling). It is a two-phase, resumable flow:
 
 ### Extraction rules (enforced by the system prompt)
 
-- Numbers: strip `$`, `%`, thousands separators. A dash `-` or `N/A` → **null**,
-  never `0`. A block headed `… – (Not Requested)` sets that program's
+- Numbers: strip `$`, `%`, thousands separators. A missing-value marker —
+  `-`, `N/A`, `UNK`, or `Unknown` → **null**, never `0`. A block headed
+  `… – (Not Requested)` sets that program's
   `*_requested` flag false and its numbers null (preserving "not requested" vs
   "genuinely zero").
 - `disaster_number` is the numeric part of e.g. `FEMA-4807-DR` → `4807`, and
