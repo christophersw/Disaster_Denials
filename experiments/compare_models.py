@@ -49,8 +49,9 @@ PRICING = {
     HAIKU_MODEL: {"in": 1.0, "out": 5.0},
 }
 
-# Sample chosen to stress the subtle fields (see module docstring).
-SAMPLE_PDFS = [
+# Sample chosen to stress the subtle fields (see module docstring). Built in two
+# batches so the report shows exactly what was tested and can be grown over time.
+BATCH_1 = [
     "data/pdfs/MajorDisaster/2026/PDAReport_FEMA4909DR-HI.pdf",       # modern, multi-county, IA+PA
     "data/pdfs/MajorDisaster/2017/FEMA4304DRKS.pdf",                  # 23-county per-capita list (stress)
     "data/pdfs/MajorDisaster/2013/PDA_Report_FEMA-4127-DR-MT.pdf",    # 15-county per-capita list
@@ -62,6 +63,19 @@ SAMPLE_PDFS = [
     "data/pdfs/Expedited/2014/PDA_Report_FEMA-4174-DR-AR_Expedited.pdf",  # expedited: mostly N/A -> null
     "data/pdfs/Other/2024/PDAReport_FEMA4773DR-HoopaVAlleyTribe.pdf", # tribal requestor + geo_type
 ]
+BATCH_2 = [
+    "data/pdfs/MajorDisaster/2024/PDAReport_FEMA4807DR-SD.pdf",       # rich multi-county + "Flood %" insured split
+    "data/pdfs/MajorDisaster/2007/PDAReport_FEMA_1731_DR_CA.pdf",     # legacy major disaster
+    "data/pdfs/MajorDisaster/2018/FEMA4367DRME_0.pdf",               # modern approval (Maine)
+    "data/pdfs/Other/2023/PDAReport_FEMA4689DR-SD.pdf",              # tribal nation
+    "data/pdfs/Other/2009/PDAReport_FEMA-1859-DR-AS.pdf",            # American Samoa territory (geo/state_abbr edge)
+    "data/pdfs/AppealDenials/2007/120507_mo_denial.pdf",            # legacy appeal denial
+    "data/pdfs/AppealDenials/2008/PDAReports_FEMA_102308_tx_denial.pdf",  # legacy appeal denial
+    "data/pdfs/Denials/2017/PDAReportDenial-KivalinaVillage.pdf",   # Alaska native village denial
+    "data/pdfs/Denials/2011/pda-report_113012_ok_denial.pdf",       # denial
+    "data/pdfs/Expedited/2015/FEMA4241DRSC_Expedited.pdf",          # expedited
+]
+SAMPLE_PDFS = BATCH_1 + BATCH_2
 
 # Report-level fields singled out in the report because they are the ones a
 # weaker model is most likely to get wrong (subtle reading / mapping rules).
@@ -272,7 +286,7 @@ def _write_report(rows, per_report_field_disagree, total_county_field_diffs,
         "denial `granted_*`=false rule.\n")
 
     add("## Cost\n")
-    add("| Model | Total (10 PDFs) | Avg / report | Avg output tok | Full corpus (1,378) |")
+    add(f"| Model | Total ({n} PDFs) | Avg / report | Avg output tok | Full corpus (1,378) |")
     add("|---|---|---|---|---|")
     add(f"| Opus 4.8 | ${opus_cost:.2f} | ${opus_cost/n:.4f} | "
         f"{opus_out/n:.0f} | ${opus_cost/n*1378:.0f} |")
