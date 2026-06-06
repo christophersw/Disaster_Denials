@@ -4,9 +4,11 @@ Research on FEMA disaster declaration outcomes — **major disaster declarations
 emergency declarations, denials, and appeal denials** — built from FEMA's
 [Preliminary Damage Assessment (PDA) reports](https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports).
 
-The goal is a **county-level, machine-readable dataset** of the Individual
+The goal is a **machine-readable, normalized dataset** of the Individual
 Assistance (IA) and Public Assistance (PA) information in each report, suitable
-for ML and data visualization, and joinable to FEMA's OpenFEMA datasets.
+for ML and data visualization, joinable to FEMA's OpenFEMA datasets, and — the
+driving research question — to county political lean (via FIPS) to study whether
+denial outcomes correlate with partisan lean.
 
 ## Pipeline
 
@@ -14,18 +16,27 @@ for ML and data visualization, and joinable to FEMA's OpenFEMA datasets.
 FEMA PDA reports (PDF)  ──►  1. download  ──►  data/pdfs/<Type>/<Year>/*.pdf
                                                       │
                                                       ▼
-                            2. parse (LLM)  ──►  data/denial_counties.csv
+                            2. parse (LLM)  ──►  data/pda.db  (SQLite)
+                                                 ├─ reports          (one row per report)
+                                                 └─ report_counties  (one row per report×county)
                                                       │
                                                       ▼
-                            3. join (optional) ─►  OpenFEMA DeclarationDenials /
-                                                   DisasterDeclarationsSummaries
+                            3. resolve + join  ─►  county → FIPS, then OpenFEMA +
+                               (Phase 2)            county presidential returns
 ```
 
 1. **Download** every PDA report PDF, organized by type and year.
-2. **Parse** each PDF into structured, county-level rows using Claude with
-   structured outputs (one row per county per report).
-3. **Join** (optional) to OpenFEMA on state + decision date (denials) or
-   disaster number (approved declarations).
+2. **Parse** each PDF into a **normalized two-table** dataset using Claude with
+   structured tool use, written to a SQLite store (`data/pda.db`): report-level
+   (state-level) fields in the `reports` table, and per-county fields in
+   `report_counties`. Runs **serially** (`parse_pda_reports.py`) or **in bulk at
+   half price** via the Batches API (`batch_pda_reports.py`).
+3. **Resolve & join** (Phase 2) — resolve each `county_name` to a FIPS code via
+   a Census crosswalk, then join to OpenFEMA and to county presidential returns.
+
+All five report types are parsed (`MajorDisaster` / `Expedited` / `Denials` /
+`AppealDenials` / `Other`): denials are the analysis treatment, approvals the
+control group.
 
 ## Setup
 
@@ -64,258 +75,159 @@ fingerprint.
 
 ## 2. Parse — `parse_pda_reports.py`
 
-For each report, the **native PDF** is sent to **Claude Opus 4.7**
-(`claude-opus-4-7`) — with adaptive thinking and `effort: "high"` for accuracy —
+For each report, the **native PDF** is sent to **Claude Opus 4.8**
+(`claude-opus-4-8`) — with adaptive thinking and `effort: "high"` for accuracy —
 as a `document` content block, so the model reads both the text layer and the
-visual layout (the two-column IA fields and the county lists extract more
-reliably than from flattened text). It returns the data via a strict JSON tool
-schema, which the script explodes
-into **one CSV row per county per report**. Counties come primarily from the PA
-"Countywide per capita impact" list (which carries the per-county dollar
-amount) and are unioned with counties named in the narrative; reports naming no
-counties yield a single row with a null county.
+visual layout (the two-column IA fields and the inline county lists extract more
+reliably than from flattened text). The model returns its answer by calling a
+`record_pda_report` **tool** whose `input_schema` is generated from the Pydantic
+models in `pda/schema.py`; the tool input is then re-validated with Pydantic.
+(Tool use rather than structured outputs / `output_config.format`, because the
+structured-output schema compiler caps union-typed parameters at 16 and the
+schema has ~41 nullable fields.) No local text extraction (OCR/`pdfplumber`) is
+used — a full-corpus check confirmed every PDF has a text layer, and the model
+reads the PDF directly.
 
-Null semantics: a `-` or `N/A` becomes an empty/null value (not zero), and the
-`(Not Requested)` section label sets `ia_requested` / `pa_requested` to false —
-preserving the difference between "not requested" and "genuinely zero".
-
-Quality levers: Opus 4.7 with adaptive thinking and `effort: "high"`; 2–3
-few-shot examples covering the sparse-denial and rich-approved extremes; and a
-`needs_review` flag so low-confidence extractions can be audited rather than
-trusted blindly. Prompt caching (stable system + examples + tool schema prefix)
-is applied too, but as a side benefit — accuracy is the priority.
-
-### Precise parsing prompt
-
-The parser sends the following to the Anthropic Messages API. The **system
-prompt** defines the extraction rules; the report PDF is sent as a `document`
-block in the user message; and the model is required to return its answer by
-calling the `record_pda_report` tool, whose `input_schema` is the exact output
-contract. The system prompt, few-shot examples, and tool schema form the cached
-prefix; the PDF is the per-request tail.
-
-**System prompt:**
-
-```text
-You are a meticulous data-extraction assistant. You are given one FEMA
-Preliminary Damage Assessment (PDA) report as a PDF. Extract the fields defined
-by the `record_pda_report` tool and return them by calling that tool. Never
-infer, estimate, or fabricate a value that is not present in the document.
-
-Document structure:
-- The report opens with a title, a "<State> – <incident name>" line, and an
-  outcome line: "Declared <date>", "Denied on <date>", or a "Denial of Appeal"
-  followed by "Denied on <date>".
-- One or more narrative paragraphs describe who requested what (Individual
-  Assistance, Public Assistance, Hazard Mitigation) and for which counties.
-- Two data blocks follow — Individual Assistance and Public Assistance — each a
-  bulleted list of fields. A block headed "... – (Not Requested)" means that
-  program was not requested; treat all its values as not-requested.
-- Numbered footnotes (1, 2, 3, ...) at the bottom are legal boilerplate. Ignore
-  them entirely.
-
-Extraction rules:
-- Numbers: strip "$", "%", and thousands separators and return a number. A dash
-  "-" or "N/A" means there is no value: return null. Never coerce "-" to 0.
-- report_outcome: "Declared", "Denied", or "Denial of Appeal", from the outcome
-  line. decision_date: the date on that line, as YYYY-MM-DD.
-- disaster_number: the FEMA disaster number if present (e.g. "FEMA-4807-DR" ->
-  4807); null for denials/appeals that have no number.
-- ia_requested / pa_requested: false if that block is marked "(Not Requested)",
-  otherwise true. When a block is not requested, set its numeric fields to null.
-- Percentages with two parts (e.g. "73.2% Flood 10.9%") map to the two distinct
-  fields (ia_pct_insured and ia_pct_flood_insured). "8.1% SSI / 16.3% SNAP" map
-  to ia_pct_ssi and ia_pct_snap.
-- Counties: return one entry per county. Set county_ia true if the county is
-  designated/requested for Individual Assistance, county_pa true if for Public
-  Assistance (a county can be both). The PA "Countywide per capita impact" list
-  implies county_pa true.
-  * Primary source is the PA "Countywide per capita impact" list: each
-    "County Name ($amount)" becomes {county_name, per_capita_impact,
-    source: "per_capita", county_pa: true}.
-  * Also include counties named in the narrative request sentence(s) with
-    source "narrative" and county_ia / county_pa set from how they're listed.
-    If the narrative gives only a count ("18 counties") with no names, do not
-    invent names.
-  * If a county appears in both the per-capita list and the narrative, set
-    source to "both" and keep the per-capita amount.
-  * If no county is named anywhere, return exactly one entry with
-    county_name null and source "none".
-- Set needs_review to true if the document departs from this structure or any
-  required field is ambiguous, and put a short note in review_note.
+```bash
+.venv/bin/python parse_pda_reports.py                       # all PDFs, resumable
+.venv/bin/python parse_pda_reports.py --limit 5             # first 5 not-yet-done
+.venv/bin/python parse_pda_reports.py --glob 'data/pdfs/Denials/**/*.pdf'
 ```
 
-**User message** (a `document` block carrying the PDF, then the instruction):
+The run is **resumable and idempotent**: PDFs already present in the `reports`
+table of `data/pda.db` are skipped, so a stopped run continues without
+re-billing finished reports. Each report and its county rows are written in a
+single transaction, so a crash mid-write leaves nothing half-recorded. A failure
+on any one report is logged to stderr and the run continues. Pass `--db` to use a
+different store path.
 
-```python
-{
-  "role": "user",
-  "content": [
-    {
-      "type": "document",
-      "source": {"type": "base64", "media_type": "application/pdf", "data": "<base64 PDF>"},
-    },
-    {"type": "text", "text": "Extract this FEMA PDA report by calling record_pda_report."},
-  ],
-}
+### Batch extraction — `batch_pda_reports.py`
+
+For the full corpus when you are **not in a hurry**, the
+[Message Batches API](https://platform.claude.com/docs/en/build-with-claude/batch-processing)
+runs the exact same requests **asynchronously at 50% of the token cost** (same
+model, thinking, and `effort` — no quality tradeoff). Most batches finish within
+an hour (24h ceiling). It is a two-phase, resumable flow:
+
+```bash
+.venv/bin/python batch_pda_reports.py submit --limit 5   # toe-in-the-water
+.venv/bin/python batch_pda_reports.py status             # in_progress → ended
+.venv/bin/python batch_pda_reports.py collect            # write finished results
+.venv/bin/python batch_pda_reports.py submit             # then the rest
+.venv/bin/python batch_pda_reports.py submit --dry-run   # plan only, no API call
 ```
 
-**Tool `input_schema` (the output contract):**
+- **`submit`** builds one request per remaining PDF (skipping reports already
+  written and PDFs already in flight), chunks them under the 256 MB per-batch
+  cap, creates the batch(es), and records the `custom_id ↔ source_pdf` mapping in
+  a `batch_items` table.
+- **`collect`** writes results from any batch that has **ended** — each succeeded
+  message is validated and written transactionally, errored/expired ones are
+  marked failed. Safe to run repeatedly until everything is collected.
+- **`status`** shows reports written, PDFs in flight, and each open batch's
+  processing state.
+- **Resumable across process restarts:** because the `custom_id ↔ source_pdf`
+  mapping lives in `data/pda.db` (not memory), you can `submit` today and
+  `collect` from a fresh process tomorrow — results are retrievable for 29 days.
+- **Caching note:** the cached system+schema prefix becomes opportunistic inside
+  a batch (concurrent requests can't read each other's cache), so batch `usage`
+  may show few cache hits. The flat 50% batch discount is the reliable win and
+  far outweighs it.
 
-```json
-{
-  "name": "record_pda_report",
-  "description": "Record the structured data extracted from one FEMA PDA report.",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "report_outcome": {"type": ["string", "null"], "enum": ["Declared", "Denied", "Denial of Appeal", null]},
-      "decision_date": {"type": ["string", "null"], "description": "YYYY-MM-DD of the Declared/Denied line"},
-      "state": {"type": ["string", "null"]},
-      "incident_name": {"type": ["string", "null"]},
-      "disaster_number": {"type": ["integer", "null"]},
-      "request_date": {"type": ["string", "null"], "description": "YYYY-MM-DD the governor requested"},
-      "incident_begin": {"type": ["string", "null"], "description": "YYYY-MM-DD"},
-      "incident_end": {"type": ["string", "null"], "description": "YYYY-MM-DD"},
-      "denial_reason": {"type": ["string", "null"], "description": "the stated basis for denial, if any"},
+### Code layout (`pda/` package)
 
-      "ia_requested": {"type": "boolean"},
-      "ia_residences_total": {"type": ["number", "null"]},
-      "ia_destroyed": {"type": ["number", "null"]},
-      "ia_major": {"type": ["number", "null"]},
-      "ia_minor": {"type": ["number", "null"]},
-      "ia_affected": {"type": ["number", "null"]},
-      "ia_pct_insured": {"type": ["number", "null"]},
-      "ia_pct_flood_insured": {"type": ["number", "null"]},
-      "ia_pct_poverty": {"type": ["number", "null"]},
-      "ia_pct_ssi": {"type": ["number", "null"]},
-      "ia_pct_snap": {"type": ["number", "null"]},
-      "ia_pct_ownership": {"type": ["number", "null"]},
-      "ia_unemployment": {"type": ["number", "null"]},
-      "ia_pct_age_65_plus": {"type": ["number", "null"]},
-      "ia_pct_age_18_under": {"type": ["number", "null"]},
-      "ia_pct_disability": {"type": ["number", "null"]},
-      "ia_icc_ratio": {"type": ["number", "null"]},
-      "ia_cost_estimate": {"type": ["number", "null"]},
+| Module | Responsibility |
+| --- | --- |
+| `pda/schema.py` | Pydantic `PdaReport` + `County` — the extraction contract and the JSON Schema. Single source of truth for fields. |
+| `pda/extract.py` | Builds and sends the Claude request for one PDF; `report_from_message` validates a response (live or batch) into a `PdaReport`. The only module that calls `messages.create`. |
+| `pda/provenance.py` | Derives `report_type` (folder), `url`, `posted_date` (from `data/manifest.csv`). |
+| `pda/flatten.py` | Splits a `PdaReport` into one `reports` row + N `report_counties` rows. |
+| `pda/columns.py` | The exact ordered column lists for the two tables. |
+| `pda/db.py` | SQLite store: schema, transactional `write_report`, the resume set, and the `batch_items` mapping used by the Batches flow. |
+| `pda/batch.py` | Batches API orchestration: deterministic `custom_id`, size-capped chunking, `submit`, and `collect`. |
+| `pda/io.py` | Legacy append-only CSV writers (no longer on the pipeline path; kept for ad-hoc CSV export). |
+| `parse_pda_reports.py` | Serial CLI: glob → skip-done → extract → flatten → write. |
+| `batch_pda_reports.py` | Batches CLI: `submit` / `collect` / `status`. |
 
-      "pa_requested": {"type": "boolean"},
-      "pa_primary_impact": {"type": ["string", "null"]},
-      "pa_cost_estimate": {"type": ["number", "null"]},
-      "pa_statewide_per_capita": {"type": ["number", "null"]},
-      "pa_statewide_per_capita_indicator": {"type": ["number", "null"]},
-      "pa_countywide_per_capita_indicator": {"type": ["number", "null"]},
-      "hm_requested": {"type": "boolean"},
+### Extraction rules (enforced by the system prompt)
 
-      "counties": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "county_name": {"type": ["string", "null"]},
-            "source": {"type": "string", "enum": ["per_capita", "narrative", "both", "none"]},
-            "per_capita_impact": {"type": ["number", "null"]},
-            "county_ia": {"type": "boolean", "description": "designated/requested for Individual Assistance"},
-            "county_pa": {"type": "boolean", "description": "designated/requested for Public Assistance"}
-          },
-          "required": ["county_name", "source", "per_capita_impact", "county_ia", "county_pa"]
-        }
-      },
+- Numbers: strip `$`, `%`, thousands separators. A dash `-` or `N/A` → **null**,
+  never `0`. A block headed `… – (Not Requested)` sets that program's
+  `*_requested` flag false and its numbers null (preserving "not requested" vs
+  "genuinely zero").
+- `disaster_number` is the numeric part of e.g. `FEMA-4807-DR` → `4807`, and
+  `declaration_type` keeps `DR`/`EM` (null for denials/appeals with no number).
+- **Requested vs granted per county.** `requested_ia`/`requested_pa` record what
+  the Governor requested; `granted_ia`/`granted_pa` record what was actually made
+  available (approvals only). Denials and appeal denials have every
+  `granted_*` = false (enforced again in `flatten.py`).
+- **Legacy vs modern IA fields.** Older reports print only
+  `ia_pct_low_income` / `ia_pct_elderly`; modern reports print
+  poverty/SSI/SNAP/ownership/unemployment/age/disability/ICC. Whichever the
+  report prints is populated; the rest are null. Legacy and modern fields are
+  **never** conflated.
+- `geo_type` captures non-county jurisdictions (parish, borough, tribe,
+  reservation, city-county, municipality) so they can be filtered from the
+  county-level political analysis.
+- `needs_review` (+ `review_note`) flags any report that departs from the
+  expected structure, for auditing rather than blind trust.
+- No derived fields — only raw facts. Ratios, FIPS, and joins are computed
+  downstream. **FIPS resolution is intentionally not the model's job** (Phase 2),
+  to avoid silent hallucinated joins.
 
-      "needs_review": {"type": "boolean"},
-      "review_note": {"type": ["string", "null"]}
-    },
-    "required": ["report_outcome", "decision_date", "state", "ia_requested", "pa_requested", "counties", "needs_review"]
-  }
-}
-```
+### Output tables (`data/pda.db`)
 
-### Few-shot examples (in the cached system prompt)
+Both runners write to one SQLite file, `data/pda.db`. `source_pdf` is the primary
+key of `reports` and a cascading foreign key on `report_counties`, so
+re-extracting a PDF cleanly replaces its rows. Columns are declared without a
+type so values keep their Python storage class — booleans land as `0`/`1` and
+nulls as `NULL`, so `WHERE ia_requested = 1` and numeric comparisons work
+directly. Export to CSV at any time with `sqlite3 data/pda.db -header -csv
+"SELECT * FROM reports"`.
 
-Two contrasting real reports are appended to the system prompt as worked
-`document → record_pda_report(...)` examples, so the model sees both extremes.
-The boilerplate footnotes are omitted here for brevity.
-
-**Example 1 — a sparse denial** (`Idaho – Gwen Fire`, IA populated, PA *not
-requested*; note the per-capita *indicators* are still present, and the only
-county comes from the narrative):
-
-```json
-{
-  "report_outcome": "Denied", "decision_date": "2024-11-20",
-  "state": "Idaho", "incident_name": "Gwen Fire", "disaster_number": null,
-  "request_date": "2024-10-07", "incident_begin": "2024-07-24", "incident_end": "2024-08-09",
-  "denial_reason": "The event was not of such severity and magnitude as to be beyond the capabilities of the state, affected local governments, and voluntary agencies.",
-  "ia_requested": true, "ia_residences_total": 70, "ia_destroyed": 42, "ia_major": 0,
-  "ia_minor": 1, "ia_affected": 27, "ia_pct_insured": 66.5, "ia_pct_flood_insured": null,
-  "ia_pct_poverty": 14.1, "ia_pct_ssi": 7.8, "ia_pct_snap": 9.2, "ia_pct_ownership": 99.0,
-  "ia_unemployment": 3.2, "ia_pct_age_65_plus": 20.3, "ia_pct_age_18_under": 21.4,
-  "ia_pct_disability": 17.7, "ia_icc_ratio": 8.57, "ia_cost_estimate": 1066144,
-  "pa_requested": false, "pa_primary_impact": null, "pa_cost_estimate": null,
-  "pa_statewide_per_capita": null, "pa_statewide_per_capita_indicator": 1.84,
-  "pa_countywide_per_capita_indicator": 4.60, "hm_requested": true,
-  "counties": [
-    {"county_name": "Nez Perce", "source": "narrative", "per_capita_impact": null, "county_ia": true, "county_pa": false}
-  ],
-  "needs_review": false, "review_note": null
-}
-```
-
-**Example 2 — a rich approved declaration** (`South Dakota; FEMA-4807-DR`,
-`Declared`, the two-part `73.2% Flood 10.9%` insured split, and the full
-"Countywide per capita impact" list → one county row each; the four IA counties
-also appear in the PA list, so they are `source: "both"` with both flags true).
-The county array enumerates **all** listed counties; a representative slice:
-
-```json
-{
-  "report_outcome": "Declared", "decision_date": "2024-08-15",
-  "state": "South Dakota", "incident_name": "Severe Storms, Straight-line Winds, and Flooding",
-  "disaster_number": 4807, "ia_requested": true, "ia_residences_total": 185,
-  "ia_destroyed": 45, "ia_major": 71, "ia_minor": 49, "ia_affected": 20,
-  "ia_pct_insured": 73.2, "ia_pct_flood_insured": 10.9, "ia_pct_poverty": 10.6,
-  "ia_pct_ssi": 8.1, "ia_pct_snap": 16.3, "ia_pct_ownership": 65.1, "ia_unemployment": 3.9,
-  "ia_pct_age_65_plus": 19.3, "ia_pct_age_18_under": 22.8, "ia_pct_disability": 21.9,
-  "ia_icc_ratio": 32.56, "ia_cost_estimate": 2419564,
-  "pa_requested": true, "pa_primary_impact": "Damage to roads and bridges",
-  "pa_cost_estimate": 19122256, "pa_statewide_per_capita": 21.57,
-  "pa_statewide_per_capita_indicator": 1.84, "pa_countywide_per_capita_indicator": 4.60,
-  "hm_requested": true,
-  "counties": [
-    {"county_name": "Aurora", "source": "per_capita", "per_capita_impact": 701.83, "county_ia": false, "county_pa": true},
-    {"county_name": "Davison", "source": "both", "per_capita_impact": 106.90, "county_ia": true, "county_pa": true},
-    {"county_name": "Lincoln", "source": "both", "per_capita_impact": 6.74, "county_ia": true, "county_pa": true}
-  ],
-  "needs_review": false, "review_note": null
-}
-```
-
-### Output: `data/denial_counties.csv`
-
-One row per county per report. The script adds provenance columns the model
-does not see (`source_pdf`, `report_type`, `state_abbr` from the filename), then
-flattens each county entry alongside the report-level IA/PA fields (which the
-PDFs report at the state level and which repeat across a report's county rows).
-
-Columns: `source_pdf`, `report_type`, `report_outcome`, `disaster_number`,
-`state`, `state_abbr`, `incident_name`, `decision_date`, `request_date`,
-`incident_begin`, `incident_end`, `denial_reason`, `county_name`,
-`county_source`, `county_per_capita_impact`, `county_ia`, `county_pa`, `ia_requested`,
+**`reports`** — one row per report. Provenance columns the model does
+not see (`source_pdf`, `report_type`, `url`, `posted_date`, `parser_model`,
+`extracted_at`) are added by the pipeline. Columns: `source_pdf`, `report_type`,
+`url`, `posted_date`, `report_outcome`, `decision_date`, `jurisdiction_name`,
+`state_abbr`, `requestor_type`, `requestor_name`, `incident_name`,
+`incident_begin`, `incident_end`, `request_date`, `disaster_number`,
+`declaration_type`, `denial_reason`, `original_denial_date`, `appeal_date`,
+`ia_requested`, `pa_requested`, `hm_requested`, `pa_categories_requested`,
 `ia_residences_total`, `ia_destroyed`, `ia_major`, `ia_minor`, `ia_affected`,
 `ia_pct_insured`, `ia_pct_flood_insured`, `ia_pct_poverty`, `ia_pct_ssi`,
 `ia_pct_snap`, `ia_pct_ownership`, `ia_unemployment`, `ia_pct_age_65_plus`,
-`ia_pct_age_18_under`, `ia_pct_disability`, `ia_icc_ratio`, `ia_cost_estimate`,
-`pa_requested`, `pa_primary_impact`, `pa_cost_estimate`,
+`ia_pct_age_18_under`, `ia_pct_disability`, `ia_icc_ratio`, `ia_pct_low_income`,
+`ia_pct_elderly`, `ia_cost_estimate`, `pa_primary_impact`, `pa_cost_estimate`,
 `pa_statewide_per_capita`, `pa_statewide_per_capita_indicator`,
-`pa_countywide_per_capita_indicator`, `hm_requested`, `needs_review`,
-`review_note`.
+`pa_countywide_per_capita_indicator`, `needs_review`, `review_note`,
+`parser_model`, `extracted_at`.
 
-## 3. Join to OpenFEMA (optional)
+**`report_counties`** — one row per (report × county), foreign-keyed to
+`reports` on `source_pdf` (`ON DELETE CASCADE`). Columns: `source_pdf`,
+`county_name`, `geo_type`, `per_capita_impact`, `requested_ia`, `requested_pa`,
+`granted_ia`, `granted_pa`, `source`. (`fips` is added in Phase 2, not by the
+model.) A `county_id` autoincrement primary key is added by the store.
 
+> Write integrity: a report and all its county rows are committed in one
+> transaction, so the cross-table consistency is guaranteed by the database — any
+> report present in `reports` has its county rows, with no half-written state.
+> `batch_items` (the Batches API `custom_id ↔ source_pdf` mapping) is internal
+> bookkeeping, not part of the dataset.
+
+## 3. Resolve & join (Phase 2)
+
+- **County → FIPS.** Resolve each `report_counties.county_name` to a FIPS code
+  via a Census state+county crosswalk with fuzzy matching, flagging unmatched
+  names for review. Tribal/non-county units (`geo_type`) are excluded from the
+  county-level political join.
 - **Denials / appeal denials** → [`DeclarationDenials`](https://www.fema.gov/api/open/v1/DeclarationDenials)
   on `state_abbr` + `decision_date` (matches `stateAbbreviation` +
   `requestStatusDate`).
 - **Approved declarations** → [`DisasterDeclarationsSummaries`](https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries)
   on `disaster_number`.
+- **County political lean** → `dataverse_files/countypres_2000-2024.csv`
+  (FIPS-keyed), joining each report's `decision_date` year to the nearest
+  preceding presidential election.
 
 ## Data sources
 
