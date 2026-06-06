@@ -16,8 +16,9 @@ denial outcomes correlate with partisan lean.
 FEMA PDA reports (PDF)  ──►  1. download  ──►  data/pdfs/<Type>/<Year>/*.pdf
                                                       │
                                                       ▼
-                            2. parse (LLM)  ──►  data/reports.csv          (one row per report)
-                                                 data/report_counties.csv  (one row per report×county)
+                            2. parse (LLM)  ──►  data/pda.db  (SQLite)
+                                                 ├─ reports          (one row per report)
+                                                 └─ report_counties  (one row per report×county)
                                                       │
                                                       ▼
                             3. resolve + join  ─►  county → FIPS, then OpenFEMA +
@@ -26,8 +27,10 @@ FEMA PDA reports (PDF)  ──►  1. download  ──►  data/pdfs/<Type>/<Yea
 
 1. **Download** every PDA report PDF, organized by type and year.
 2. **Parse** each PDF into a **normalized two-table** dataset using Claude with
-   structured outputs: report-level (state-level) fields in `data/reports.csv`,
-   and per-county fields in `data/report_counties.csv`.
+   structured tool use, written to a SQLite store (`data/pda.db`): report-level
+   (state-level) fields in the `reports` table, and per-county fields in
+   `report_counties`. Runs **serially** (`parse_pda_reports.py`) or **in bulk at
+   half price** via the Batches API (`batch_pda_reports.py`).
 3. **Resolve & join** (Phase 2) — resolve each `county_name` to a FIPS code via
    a Census crosswalk, then join to OpenFEMA and to county presidential returns.
 
@@ -91,22 +94,60 @@ reads the PDF directly.
 .venv/bin/python parse_pda_reports.py --glob 'data/pdfs/Denials/**/*.pdf'
 ```
 
-The run is **resumable and idempotent**: PDFs already present in
-`data/reports.csv` are skipped, so a stopped run continues without re-billing
-finished reports. A failure on any one report is logged to stderr and the run
-continues.
+The run is **resumable and idempotent**: PDFs already present in the `reports`
+table of `data/pda.db` are skipped, so a stopped run continues without
+re-billing finished reports. Each report and its county rows are written in a
+single transaction, so a crash mid-write leaves nothing half-recorded. A failure
+on any one report is logged to stderr and the run continues. Pass `--db` to use a
+different store path.
+
+### Batch extraction — `batch_pda_reports.py`
+
+For the full corpus when you are **not in a hurry**, the
+[Message Batches API](https://platform.claude.com/docs/en/build-with-claude/batch-processing)
+runs the exact same requests **asynchronously at 50% of the token cost** (same
+model, thinking, and `effort` — no quality tradeoff). Most batches finish within
+an hour (24h ceiling). It is a two-phase, resumable flow:
+
+```bash
+.venv/bin/python batch_pda_reports.py submit --limit 5   # toe-in-the-water
+.venv/bin/python batch_pda_reports.py status             # in_progress → ended
+.venv/bin/python batch_pda_reports.py collect            # write finished results
+.venv/bin/python batch_pda_reports.py submit             # then the rest
+.venv/bin/python batch_pda_reports.py submit --dry-run   # plan only, no API call
+```
+
+- **`submit`** builds one request per remaining PDF (skipping reports already
+  written and PDFs already in flight), chunks them under the 256 MB per-batch
+  cap, creates the batch(es), and records the `custom_id ↔ source_pdf` mapping in
+  a `batch_items` table.
+- **`collect`** writes results from any batch that has **ended** — each succeeded
+  message is validated and written transactionally, errored/expired ones are
+  marked failed. Safe to run repeatedly until everything is collected.
+- **`status`** shows reports written, PDFs in flight, and each open batch's
+  processing state.
+- **Resumable across process restarts:** because the `custom_id ↔ source_pdf`
+  mapping lives in `data/pda.db` (not memory), you can `submit` today and
+  `collect` from a fresh process tomorrow — results are retrievable for 29 days.
+- **Caching note:** the cached system+schema prefix becomes opportunistic inside
+  a batch (concurrent requests can't read each other's cache), so batch `usage`
+  may show few cache hits. The flat 50% batch discount is the reliable win and
+  far outweighs it.
 
 ### Code layout (`pda/` package)
 
 | Module | Responsibility |
 | --- | --- |
 | `pda/schema.py` | Pydantic `PdaReport` + `County` — the extraction contract and the JSON Schema. Single source of truth for fields. |
-| `pda/extract.py` | Builds and sends the Claude request for one PDF; returns a validated `PdaReport`. The only module that touches the network. |
+| `pda/extract.py` | Builds and sends the Claude request for one PDF; `report_from_message` validates a response (live or batch) into a `PdaReport`. The only module that calls `messages.create`. |
 | `pda/provenance.py` | Derives `report_type` (folder), `url`, `posted_date` (from `data/manifest.csv`). |
 | `pda/flatten.py` | Splits a `PdaReport` into one `reports` row + N `report_counties` rows. |
-| `pda/columns.py` | The exact ordered column lists for the two CSVs. |
-| `pda/io.py` | Append-only CSV writers + the resume set. |
-| `parse_pda_reports.py` | CLI: glob → skip-done → extract → flatten → append. |
+| `pda/columns.py` | The exact ordered column lists for the two tables. |
+| `pda/db.py` | SQLite store: schema, transactional `write_report`, the resume set, and the `batch_items` mapping used by the Batches flow. |
+| `pda/batch.py` | Batches API orchestration: deterministic `custom_id`, size-capped chunking, `submit`, and `collect`. |
+| `pda/io.py` | Legacy append-only CSV writers (no longer on the pipeline path; kept for ad-hoc CSV export). |
+| `parse_pda_reports.py` | Serial CLI: glob → skip-done → extract → flatten → write. |
+| `batch_pda_reports.py` | Batches CLI: `submit` / `collect` / `status`. |
 
 ### Extraction rules (enforced by the system prompt)
 
@@ -134,9 +175,17 @@ continues.
   downstream. **FIPS resolution is intentionally not the model's job** (Phase 2),
   to avoid silent hallucinated joins.
 
-### Output tables
+### Output tables (`data/pda.db`)
 
-**`data/reports.csv`** — one row per report. Provenance columns the model does
+Both runners write to one SQLite file, `data/pda.db`. `source_pdf` is the primary
+key of `reports` and a cascading foreign key on `report_counties`, so
+re-extracting a PDF cleanly replaces its rows. Columns are declared without a
+type so values keep their Python storage class — booleans land as `0`/`1` and
+nulls as `NULL`, so `WHERE ia_requested = 1` and numeric comparisons work
+directly. Export to CSV at any time with `sqlite3 data/pda.db -header -csv
+"SELECT * FROM reports"`.
+
+**`reports`** — one row per report. Provenance columns the model does
 not see (`source_pdf`, `report_type`, `url`, `posted_date`, `parser_model`,
 `extracted_at`) are added by the pipeline. Columns: `source_pdf`, `report_type`,
 `url`, `posted_date`, `report_outcome`, `decision_date`, `jurisdiction_name`,
@@ -153,16 +202,17 @@ not see (`source_pdf`, `report_type`, `url`, `posted_date`, `parser_model`,
 `pa_countywide_per_capita_indicator`, `needs_review`, `review_note`,
 `parser_model`, `extracted_at`.
 
-**`data/report_counties.csv`** — one row per (report × county), foreign-keyed to
-`reports` on `source_pdf`. Columns: `source_pdf`, `county_name`, `geo_type`,
-`per_capita_impact`, `requested_ia`, `requested_pa`, `granted_ia`, `granted_pa`,
-`source`. (`fips` is added in Phase 2, not by the model.)
+**`report_counties`** — one row per (report × county), foreign-keyed to
+`reports` on `source_pdf` (`ON DELETE CASCADE`). Columns: `source_pdf`,
+`county_name`, `geo_type`, `per_capita_impact`, `requested_ia`, `requested_pa`,
+`granted_ia`, `granted_pa`, `source`. (`fips` is added in Phase 2, not by the
+model.) A `county_id` autoincrement primary key is added by the store.
 
-> CSV note: boolean columns are written as Python's `True`/`False` strings and
-> nulls as empty cells. Downstream loaders (pandas `read_csv`, R `readr`) should
-> cast booleans explicitly. The writer appends counties first and the report row
-> last, so any report present in `reports.csv` is guaranteed to have its county
-> rows on disk (the resume key is `reports.csv`).
+> Write integrity: a report and all its county rows are committed in one
+> transaction, so the cross-table consistency is guaranteed by the database — any
+> report present in `reports` has its county rows, with no half-written state.
+> `batch_items` (the Batches API `custom_id ↔ source_pdf` mapping) is internal
+> bookkeeping, not part of the dataset.
 
 ## 3. Resolve & join (Phase 2)
 

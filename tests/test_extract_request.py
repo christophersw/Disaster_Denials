@@ -4,7 +4,13 @@ import base64
 
 import pytest
 
-from pda.extract import MODEL, TOOL_NAME, build_request, extract_report
+from pda.extract import (
+    MODEL,
+    TOOL_NAME,
+    build_request,
+    extract_report,
+    report_from_message,
+)
 
 
 class _Block:
@@ -97,3 +103,35 @@ def test_extract_report_raises_clear_error_when_tool_not_called():
     response = _Response(content=[_Block("text")], stop_reason="end_turn")
     with pytest.raises(ValueError, match="did not call"):
         extract_report(_FakeClient(response), b"%PDF fake")
+
+
+def test_report_from_message_parses_any_message():
+    """report_from_message validates a tool_use block from any Messages response
+    (used for both live calls and batch results)."""
+    payload = {c: None for c in (
+        "report_outcome", "decision_date", "jurisdiction_name", "state_abbr",
+        "requestor_type", "requestor_name", "incident_name", "incident_begin",
+        "incident_end", "request_date", "disaster_number", "declaration_type",
+        "denial_reason", "original_denial_date", "appeal_date",
+        "pa_categories_requested", "ia_residences_total", "ia_destroyed",
+        "ia_major", "ia_minor", "ia_affected", "ia_pct_insured",
+        "ia_pct_flood_insured", "ia_pct_poverty", "ia_pct_ssi", "ia_pct_snap",
+        "ia_pct_ownership", "ia_unemployment", "ia_pct_age_65_plus",
+        "ia_pct_age_18_under", "ia_pct_disability", "ia_icc_ratio",
+        "ia_pct_low_income", "ia_pct_elderly", "ia_cost_estimate",
+        "pa_primary_impact", "pa_cost_estimate", "pa_statewide_per_capita",
+        "pa_statewide_per_capita_indicator", "pa_countywide_per_capita_indicator",
+        "review_note")}
+    payload.update({
+        "report_outcome": "Declared", "ia_requested": True, "pa_requested": True,
+        "hm_requested": False, "counties": [], "needs_review": False,
+    })
+    message = _Response(content=[_Block("tool_use", name=TOOL_NAME, input=payload)])
+    report = report_from_message(message)
+    assert report.report_outcome == "Declared"
+
+
+def test_report_from_message_raises_when_tool_not_called():
+    message = _Response(content=[_Block("text")], stop_reason="max_tokens")
+    with pytest.raises(ValueError, match="did not call"):
+        report_from_message(message)

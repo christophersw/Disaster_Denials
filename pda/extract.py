@@ -134,8 +134,31 @@ def build_request(pdf_bytes: bytes) -> dict:
     }
 
 
+def report_from_message(message) -> PdaReport:
+    """Validate the record_pda_report tool call in a Messages response.
+
+    Works on any Messages API response object — a live messages.create result
+    or a batch result's `.message` — so the parsing lives in one place.
+
+    Args:
+        message: A response with `.content` (content blocks) and `.stop_reason`.
+    Returns:
+        The validated PdaReport.
+    Raises:
+        ValueError: if the model did not call the record_pda_report tool.
+        pydantic.ValidationError: if the tool input does not match the schema.
+    """
+    tool_use = next(
+        (block for block in message.content
+         if block.type == "tool_use" and block.name == TOOL_NAME), None)
+    if tool_use is None:
+        raise ValueError(
+            f"Model did not call {TOOL_NAME} (stop_reason={message.stop_reason})")
+    return PdaReport.model_validate(tool_use.input)
+
+
 def extract_report(client: anthropic.Anthropic, pdf_bytes: bytes) -> PdaReport:
-    """Extract one PDF into a validated PdaReport.
+    """Extract one PDF into a validated PdaReport via a live API call.
 
     Args:
         client: An Anthropic client.
@@ -146,10 +169,4 @@ def extract_report(client: anthropic.Anthropic, pdf_bytes: bytes) -> PdaReport:
         pydantic.ValidationError: if the response does not match the schema.
     """
     response = client.messages.create(**build_request(pdf_bytes))
-    tool_use = next(
-        (block for block in response.content
-         if block.type == "tool_use" and block.name == TOOL_NAME), None)
-    if tool_use is None:
-        raise ValueError(
-            f"Model did not call {TOOL_NAME} (stop_reason={response.stop_reason})")
-    return PdaReport.model_validate(tool_use.input)
+    return report_from_message(response)
