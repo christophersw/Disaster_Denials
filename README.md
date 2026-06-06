@@ -76,11 +76,14 @@ For each report, the **native PDF** is sent to **Claude Opus 4.8**
 (`claude-opus-4-8`) — with adaptive thinking and `effort: "high"` for accuracy —
 as a `document` content block, so the model reads both the text layer and the
 visual layout (the two-column IA fields and the inline county lists extract more
-reliably than from flattened text). Output is constrained by **structured
-outputs** (`output_config.format`) to a JSON Schema generated from the Pydantic
-models in `pda/schema.py`, so the response is schema-validated. No local text
-extraction (OCR/`pdfplumber`) is used — a full-corpus check confirmed every PDF
-has a text layer, and the model reads the PDF directly.
+reliably than from flattened text). The model returns its answer by calling a
+`record_pda_report` **tool** whose `input_schema` is generated from the Pydantic
+models in `pda/schema.py`; the tool input is then re-validated with Pydantic.
+(Tool use rather than structured outputs / `output_config.format`, because the
+structured-output schema compiler caps union-typed parameters at 16 and the
+schema has ~41 nullable fields.) No local text extraction (OCR/`pdfplumber`) is
+used — a full-corpus check confirmed every PDF has a text layer, and the model
+reads the PDF directly.
 
 ```bash
 .venv/bin/python parse_pda_reports.py                       # all PDFs, resumable
