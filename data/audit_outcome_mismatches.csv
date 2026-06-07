@@ -1,0 +1,9 @@
+source_pdf,report_type,report_outcome,decision_date,state_abbr,needs_review,review_note
+data/pdfs/AppealDenials/2008/PDAReports_FEMA_100608_ok_denial.pdf,AppealDenials,Denied,2008-10-06,OK,0,
+data/pdfs/AppealDenials/2010/pda_report_041610_fl_denial.pdf,AppealDenials,Denied,2010-04-16,FL,0,
+data/pdfs/AppealDenials/2010/pda_report_052010_ar_denial.pdf,AppealDenials,Denied,2010-05-20,AR,0,
+data/pdfs/AppealDenials/2010/072810_okla_denial.pdf,AppealDenials,Denied,2010-07-28,OK,0,
+data/pdfs/AppealDenials/2021/PDAReport_AppealDenial-FortPeckTribes.pdf,AppealDenials,Denied,2021-09-13,,0,
+data/pdfs/Denials/2008/PDAReports_FEMA_072308_ga_denial.pdf,Denials,"Denial of Appeal",2008-07-23,GA,0,
+data/pdfs/Denials/2008/PDAReports_FEMA_082008_il_denial.pdf,Denials,"Denial of Appeal",2008-08-20,IL,1,"Appeal dates are inconsistent: narrative states the Governor appealed ""on May 23, 2007, and on May 27, 2008"" (the 2007 year appears to be a typo); appeal_date set to 2008-05-27. IA was requested for 15 counties but no IA county names are given; the 21 named counties are from the PA countywide per-capita list (PA requested, denial so nothing granted)."
+data/pdfs/Denials/2008/PDAReports_FEMA_121808_fl_denial.pdf,Denials,"Denial of Appeal",2008-12-18,FL,0,
