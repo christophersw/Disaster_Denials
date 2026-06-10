@@ -227,6 +227,7 @@ docs/superpowers/
 # Generated analysis artifacts (regenerable via scripts/map_pda_counties_to_fips.py)
 data/pda_county_fips_unmatched.csv
 data/pda_county_fips_fuzzy_matches.csv
+data/pda_county_fips_llm_matches.csv
 
 # Microsoft Office temporary lock files
 ~$*

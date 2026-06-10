@@ -157,7 +157,8 @@ def test_add_fips_columns_is_idempotent():
     add_fips_columns(conn)
     add_fips_columns(conn)  # second call must not raise
     cols = {r[1] for r in conn.execute("PRAGMA table_info(report_counties)")}
-    assert {"county_fips", "fips_match_method", "fuzzy_score"} <= cols
+    assert {"county_fips", "fips_match_method", "fuzzy_score",
+            "llm_confidence", "llm_reasoning"} <= cols
 
 
 def test_map_report_counties_classifies_and_applies_fuzzy():

@@ -185,19 +185,26 @@ def match_county_name(state_abbr: str, county_name: str, geo_type, state_index: 
 def add_fips_columns(conn) -> None:
     """Add the FIPS-mapping columns to report_counties if not already present.
 
-    Adds county_fips, fips_match_method, and fuzzy_score (the difflib ratio,
-    populated only for fuzzy_match rows so they can be reviewed by confidence).
+    Adds county_fips, fips_match_method, fuzzy_score (the difflib ratio,
+    populated only for fuzzy_match rows), and llm_confidence/llm_reasoning (the
+    model's self-reported confidence and rationale, populated only for llm_match
+    rows). All audit columns let a reviewer sort and spot-check the inexact
+    matches.
 
     Args:
         conn: open sqlite3 connection.
     """
+    columns = {
+        "county_fips": "TEXT",
+        "fips_match_method": "TEXT",
+        "fuzzy_score": "REAL",
+        "llm_confidence": "REAL",
+        "llm_reasoning": "TEXT",
+    }
     existing = {row[1] for row in conn.execute("PRAGMA table_info(report_counties)")}
-    if "county_fips" not in existing:
-        conn.execute("ALTER TABLE report_counties ADD COLUMN county_fips TEXT")
-    if "fips_match_method" not in existing:
-        conn.execute("ALTER TABLE report_counties ADD COLUMN fips_match_method TEXT")
-    if "fuzzy_score" not in existing:
-        conn.execute("ALTER TABLE report_counties ADD COLUMN fuzzy_score REAL")
+    for name, sql_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE report_counties ADD COLUMN {name} {sql_type}")
     conn.commit()
 
 
