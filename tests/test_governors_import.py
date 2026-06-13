@@ -77,6 +77,40 @@ def test_governor_rows_from_extraction_filters_pre_window():
     assert all(r["source_url"] == "https://w/x" for r in rows)
 
 
+def test_governor_rows_from_extraction_drops_degenerate_tenures():
+    # Bad extraction sometimes emits placeholder rows with term_end == term_start
+    # (or no start). These are not real tenures and must be dropped.
+    extracted = [
+        {"name": "Placeholder", "party": "Democratic",
+         "term_start": "2007-01-01", "term_end": "2007-01-01"},   # degenerate
+        {"name": "Inverted", "party": "Republican",
+         "term_start": "2015-01-01", "term_end": "2011-01-01"},   # inverted
+        {"name": "No Start", "party": "Republican",
+         "term_start": "", "term_end": "2018-01-01"},             # missing start
+        {"name": "Real Gov", "party": "Democratic",
+         "term_start": "2015-01-06", "term_end": "2021-03-02"},   # kept
+    ]
+    rows = governor_rows_from_extraction("RI", "https://w/ri", extracted)
+    assert [r["name"] for r in rows] == ["Real Gov"]
+
+
+def test_governor_rows_from_extraction_drops_contained_tenure():
+    # A hallucinated historical governor clamped into the window sits inside the
+    # real governor's span; one governor serves at a time, so it must be dropped.
+    extracted = [
+        {"name": "Bogus Old", "party": "Republican",
+         "term_start": "2007-01-01", "term_end": "2007-01-15"},   # inside Rendell
+        {"name": "Ed Rendell", "party": "Democratic",
+         "term_start": "2003-01-21", "term_end": "2011-01-18"},    # real, kept
+        {"name": "Tom Corbett", "party": "Republican",
+         "term_start": "2011-01-18", "term_end": "2015-01-20"},    # real, kept
+        {"name": "Josh Shapiro", "party": "Democratic",
+         "term_start": "2023-01-17", "term_end": ""},              # sitting, kept
+    ]
+    rows = governor_rows_from_extraction("PA", "https://w/pa", extracted)
+    assert [r["name"] for r in rows] == ["Ed Rendell", "Tom Corbett", "Josh Shapiro"]
+
+
 from pda.db import connect as db_connect
 from pda.presidents_import import add_political_columns
 from pda.governors_import import (

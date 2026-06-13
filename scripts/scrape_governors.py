@@ -17,6 +17,8 @@ import csv
 import json
 import pathlib
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -30,6 +32,10 @@ DEFAULT_OUT = "data/governors.csv"
 # Clean structured tables — a small, fast model is sufficient and cheap.
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 WIKI_API = "https://en.wikipedia.org/w/api.php"
+# Wikipedia policy asks for a descriptive User-Agent with contact info, and
+# rate-limits rapid anonymous requests (HTTP 429). Be polite between calls.
+WIKI_USER_AGENT = "disaster-denials-research/1.0 (chris@webster.family)"
+REQUEST_DELAY_SECONDS = 1.0
 
 # (state_abbr, Wikipedia article title) for 50 states + 5 NGA territories.
 STATE_ARTICLES = [
@@ -105,22 +111,31 @@ def article_url(title):
     return "https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_"))
 
 
-def fetch_wikitext(title):
-    """Fetch an article's wikitext via the MediaWiki API.
+def fetch_wikitext(title, max_retries=4):
+    """Fetch an article's wikitext via the MediaWiki API, retrying on 429.
 
     Args:
         title: Wikipedia article title.
+        max_retries: attempts before giving up on rate-limit responses.
     Returns:
         The wikitext string.
+    Raises:
+        urllib.error.HTTPError: on a non-429 error, or 429 after all retries.
     """
     query = urllib.parse.urlencode({
         "action": "parse", "page": title, "prop": "wikitext",
         "format": "json", "formatversion": "2", "redirects": "1"})
     request = urllib.request.Request(
-        f"{WIKI_API}?{query}", headers={"User-Agent": "disaster-denials-research/1.0"})
-    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 (fixed host)
-        payload = json.load(response)
-    return payload["parse"]["wikitext"]
+        f"{WIKI_API}?{query}", headers={"User-Agent": WIKI_USER_AGENT})
+    for attempt in range(max_retries):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 (fixed host)
+                return json.load(response)["parse"]["wikitext"]
+        except urllib.error.HTTPError as error:
+            if error.code == 429 and attempt < max_retries - 1:
+                time.sleep(5 * (attempt + 1))   # 5s, 10s, 15s backoff
+                continue
+            raise
 
 
 def extract_governors(client, model, wikitext):
@@ -174,7 +189,9 @@ def main():
     client = anthropic.Anthropic()
 
     all_rows = []
-    for state_abbr, title in STATE_ARTICLES:
+    for index, (state_abbr, title) in enumerate(STATE_ARTICLES):
+        if index:
+            time.sleep(REQUEST_DELAY_SECONDS)   # be polite to the Wikipedia API
         wikitext = fetch_wikitext(title)
         extracted = extract_governors(client, args.model, wikitext)
         rows = governor_rows_from_extraction(state_abbr, article_url(title), extracted)

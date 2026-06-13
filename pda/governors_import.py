@@ -132,18 +132,52 @@ def governor_rows_from_extraction(state_abbr, source_url, governors):
     """
     rows = []
     for governor in governors:
+        term_start = (governor.get("term_start") or "").strip()
         term_end = (governor.get("term_end") or "").strip()
+        if not term_start:
+            continue                              # a tenure needs a start date
+        if term_end and term_end <= term_start:
+            continue                              # degenerate/inverted tenure
         if term_end and term_end < WINDOW_START:
-            continue
+            continue                              # ended before the 2007 window
         rows.append({
             "state_abbr": state_abbr,
             "name": (governor.get("name") or "").strip(),
             "party": (governor.get("party") or "").strip(),
-            "term_start": (governor.get("term_start") or "").strip(),
+            "term_start": term_start,
             "term_end": term_end,
             "source_url": source_url,
         })
-    return rows
+    return drop_contained_tenures(rows)
+
+
+def drop_contained_tenures(rows):
+    """Drop tenures fully contained within another tenure of the same state.
+
+    Only one governor serves at a time, so a tenure whose [term_start, term_end)
+    sits inside another's is necessarily a bad extraction (e.g. a hallucinated
+    historical governor clamped into the window). Empty term_end is treated as
+    the far future (the sitting governor).
+
+    Args:
+        rows: list of governor row dicts for a single state.
+    Returns:
+        rows with contained tenures removed (order preserved).
+    """
+    def end_key(row):
+        return row["term_end"] or "9999-12-31"
+
+    kept = []
+    for index, row in enumerate(rows):
+        contained = any(
+            other_index != index
+            and other["term_start"] <= row["term_start"]
+            and end_key(row) <= end_key(other)
+            and (other["term_start"], end_key(other)) != (row["term_start"], end_key(row))
+            for other_index, other in enumerate(rows))
+        if not contained:
+            kept.append(row)
+    return kept
 
 
 # Derived governor columns on reports (report/state grain). Kept out of
