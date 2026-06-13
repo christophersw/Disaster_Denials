@@ -1,0 +1,9 @@
+{
+  "name": "Disaster_Denials",
+  "repos": [
+    {
+      "alias": "Disaster_Denials",
+      "path": ".."
+    }
+  ]
+}
