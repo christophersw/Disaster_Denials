@@ -5,8 +5,10 @@ Description: Loads data/us_presidents_2025.csv into data/pda.db (presidents
     reference table), builds the state-year presidential rollup, adds the
     derived political columns, and materializes who-was-president and
     party-match for every report and county row. Idempotent: re-running
-    refreshes all derived data. Downloads the CSV if it is missing. Prints a
-    verification summary.
+    refreshes all derived data. The CSV is the committed source of record
+    (data/us_presidents_2025.csv); if it is missing, the script prints how to
+    restore it rather than fetching from the network. Prints a verification
+    summary.
 Changelog:
     2026-06-13  Initial version.
 """
@@ -15,7 +17,6 @@ import argparse
 import pathlib
 import sys
 import sqlite3
-import urllib.request
 
 # Make `pda` importable when run as `.venv/bin/python scripts/import_presidents.py`.
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
@@ -28,22 +29,36 @@ from pda.presidents_import import (
 
 DEFAULT_DB = "data/pda.db"
 DEFAULT_CSV = "data/us_presidents_2025.csv"
-DEFAULT_URL = ("https://raw.githubusercontent.com/jray-8/us-presidents-dataset/"
+# Source of the committed CSV, shown to the operator if the file is missing.
+DATASET_URL = ("https://raw.githubusercontent.com/jray-8/us-presidents-dataset/"
                "main/data/us_presidents_2025.csv")
 
 
-def ensure_csv(csv_path, url):
-    """Download the presidents CSV if it is not already present.
+def resolve_csv(csv_path):
+    """Resolve the CSV path within the project tree and confirm it exists.
+
+    The committed data file is the source of record; this script does not fetch
+    from the network. The path is constrained to the project tree so a stray
+    ``--csv`` argument cannot read from outside the repo, and a missing file
+    yields a clear restore instruction.
 
     Args:
-        csv_path: local path to the CSV.
-        url: raw URL to download from when the file is missing.
+        csv_path: local path to the CSV (resolved within the project tree).
+    Returns:
+        The resolved pathlib.Path to the CSV.
+    Raises:
+        ValueError: if the path escapes the project tree.
+        FileNotFoundError: if the CSV is not present.
     """
-    path = pathlib.Path(csv_path)
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, csv_path)
+    base = pathlib.Path.cwd().resolve()
+    path = (base / csv_path).resolve()
+    if base != path and base not in path.parents:
+        raise ValueError(f"refusing to use a CSV path outside the project: {csv_path}")
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{csv_path} not found. Restore the committed dataset with:\n"
+            f"  curl -fsSL {DATASET_URL} -o {csv_path}")
+    return path
 
 
 def main():
@@ -52,15 +67,14 @@ def main():
         description="Import US presidents and materialize party-match columns")
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--csv", default=DEFAULT_CSV)
-    parser.add_argument("--url", default=DEFAULT_URL)
     args = parser.parse_args()
 
-    ensure_csv(args.csv, args.url)
+    csv_path = resolve_csv(args.csv)
 
     conn = sqlite3.connect(args.db)
     try:
         create_presidents_table(conn)
-        load_presidents(conn, list(iter_president_rows(args.csv)))
+        load_presidents(conn, list(iter_president_rows(str(csv_path))))
         create_state_summary_table(conn)
         build_state_summary(conn)
         add_political_columns(conn)
