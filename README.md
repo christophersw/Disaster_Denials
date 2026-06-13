@@ -230,7 +230,33 @@ model.) A `county_id` autoincrement primary key is added by the store.
   (FIPS-keyed), joining each report's `decision_date` year to the nearest
   preceding presidential election.
 
+## Governor party affiliation
+
+To determine which governor requested each disaster declaration and where that
+governor stood politically, we assembled a record of every person who served as
+governor of each U.S. state and the five inhabited territories (Puerto Rico,
+Guam, the U.S. Virgin Islands, American Samoa, and the Northern Mariana Islands)
+across the period covered by the denials, 2007 through 2026. The governor
+information was drawn from Wikipedia's per-state "List of governors" pages —
+which provide each governor's name, political party, and the exact dates they
+took and left office — and the current officeholders were cross-checked against
+the National Governors Association's official roster. From these sources we kept
+one entry per continuous term of service that overlapped the study window,
+recording the governor's name, party, and start and end dates. Each disaster
+report was then matched to the governor in office in that state on the date the
+request was made, giving us the requesting governor and their party for nearly
+every report. Finally, we compared that governor's party against the sitting
+president's party and against how the state had voted in the most recent
+presidential election, so each report carries a clear picture of whether the
+requesting governor was politically aligned with the federal administration and
+with their own state's electorate. Before finalizing, the governor list was
+checked for completeness and consistency — confirming there were no overlapping
+or missing terms — and a handful of erroneous historical entries were removed so
+that every date resolves to exactly one governor.
+
 ## Data sources
 
 - FEMA PDA reports index: <https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports>
 - OpenFEMA API (no key required): <https://www.fema.gov/about/openfema/api>
+- National Governors Association roster (current governors): <https://www.nga.org/governors/>
+- Wikipedia "List of governors of ⟨state⟩" pages (historical governors, party and term dates)
