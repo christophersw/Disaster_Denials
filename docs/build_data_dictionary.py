@@ -11,6 +11,7 @@ Description: Generate docs/PDA_data_dictionary.docx from live sources — the fi
 Changelog:
     2026-06-06  Initial version (data dictionary + dataset summary + prompt).
     2026-06-06  Add human-review counts and review_note reason breakdown.
+    2026-06-14  Document the total_cost_estimate generated column.
 """
 
 import datetime
@@ -104,6 +105,7 @@ REPORT_FIELDS = [
     ("GROUP", "Public Assistance (state-level)"),
     ("pa_primary_impact", "string or null", "Primary PA impact description."),
     ("pa_cost_estimate", "number or null", "Total PA cost estimate ($)."),
+    ("total_cost_estimate", "number or null (generated)", "Total disaster cost ($): ia_cost_estimate + pa_cost_estimate, treating a missing side as $0; null only when both are absent. A SQLite VIRTUAL generated column, recomputed on read."),
     ("pa_statewide_per_capita", "number or null", "Statewide per-capita impact ($)."),
     ("pa_statewide_per_capita_indicator", "number or null", "Statewide per-capita threshold ($)."),
     ("pa_countywide_per_capita_indicator", "number or null", "Countywide per-capita threshold ($)."),
@@ -282,6 +284,7 @@ def build(db_path=DB_PATH, out_path=OUT_PATH):
     for note in [
         "The unit's state is not stored on report_counties by design — join to reports.state_abbr via source_pdf (a PDA report is single-state).",
         "In SQLite, columns are declared without a type so values keep their native storage class: booleans are 0/1, dates/enums are TEXT, numbers are REAL/INTEGER, absent values are NULL.",
+        "total_cost_estimate is a VIRTUAL generated column (computed from ia_cost_estimate + pa_cost_estimate, never stored), so it self-updates and never goes stale. It appears in SELECT * and queries by name, but NOT in PRAGMA table_info — use PRAGMA table_xinfo to enumerate it programmatically.",
         "Dates are stored as YYYY-MM-DD strings (lexically sortable); cast in your analysis tool as needed.",
     ]:
         doc.add_paragraph(note, style="List Bullet")
