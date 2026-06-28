@@ -69,5 +69,7 @@ def test_fit_produces_odds_ratio_table():
     assert "ci_high" in table.columns
     assert (table["odds_ratio"] > 0).all()
     assert np.isfinite(table["odds_ratio"]).all()
+    # CI bounds must also be finite: an exp-overflow in a CI bound must not pass.
+    assert np.isfinite(table[["ci_low", "ci_high"]].to_numpy()).all()
     # The headline political feature must survive the pipeline into the table.
     assert "state_party_match" in table.index

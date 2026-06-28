@@ -11,6 +11,15 @@ Description:
     fit) for the random effects, with a pooled penalized Logit fallback if the
     mixed fit fails to converge given the small (~88) positive class.
 
+    Caveat — VB intervals are anti-conservative: mean-field variational Bayes
+    (fit_vb) factorises the posterior and so UNDERESTIMATES posterior variance.
+    The 95% credible intervals odds_ratio_table reports from the mixed fit are
+    therefore NARROWER than a proper (e.g. MCMC) posterior and must be read as
+    indicative, not as definitive "significance" bounds. The runner
+    (scripts/run_model1_logit.py) cross-checks each political effect against a
+    pooled-Logit Wald interval fit on the same design, so a reader can see whether
+    the VB and Wald intervals agree on which effects are bounded away from OR = 1.
+
     Deviations from the Task-9 brief (documented in the Task-9 report):
       * Categorical detection uses ``not is_numeric_dtype`` rather than
         ``dtype == "object"``: under pandas 3.0 the genuine categoricals
@@ -82,6 +91,14 @@ _INDICATOR_COLS = [
 # Columns dropped from the design after they have served their purpose: the
 # estimand selector (jurisdiction_type) and the IA-demographic block (§5.3/§6).
 _DROP_FROM_DESIGN = ["jurisdiction_type"]
+
+# Election-timing flags that are CONSTANT within a calendar year and therefore
+# perfectly collinear with the C(year) random intercept. Their fixed-effect odds
+# ratios are prior-driven artifacts (the year random effect already carries all
+# between-year variation), not identified effects, so they are dropped from M1's
+# fixed-effect design. months_to_next_election varies WITHIN a year and stays.
+# M1-specific: the feature modules and Models 2/3 still use these flags.
+_YEAR_COLLINEAR_FLAGS = ["presidential_election_year", "midterm_election_year"]
 
 # Reserved frame columns that are never predictors.
 _RESERVED = {"denied", "state", "year"}
@@ -155,8 +172,12 @@ def prepare_logit_frame(X, y, groups):
         removed.
     """
     df = X.copy()
-    df["denied"] = np.asarray(y)
-    df["state"] = np.asarray(groups)
+    # Index-aligned (NOT positional) assignment: reindex onto X's index so a
+    # future reorder in feature assembly can never silently misalign the target
+    # or the state grouping key against the predictor rows. A label present in X
+    # but absent from y/groups surfaces as NaN and fails loudly downstream.
+    df["denied"] = y.reindex(df.index)
+    df["state"] = groups.reindex(df.index)
 
     # --- M1 estimand: states + DC only (§7) -------------------------------
     df = df[df["jurisdiction_type"].isin(_STATE_ESTIMAND)].copy()
@@ -198,6 +219,14 @@ def prepare_logit_frame(X, y, groups):
                        pd.Series(0, index=df.index))
         df["year"] = pd.to_numeric(proxy, errors="coerce").fillna(0).astype(int)
 
+    # --- Drop year-constant election flags (collinear with C(year)) --------
+    # presidential_election_year / midterm_election_year are constant within a
+    # calendar year, so the C(year) random intercept perfectly absorbs them and
+    # their fixed-effect odds ratios would be prior-driven artifacts. Drop them
+    # from the M1 fixed effects (this must run AFTER deriving 'year' so the proxy
+    # fallback above can still read presidential_election_year if needed).
+    df = df.drop(columns=[c for c in _YEAR_COLLINEAR_FLAGS if c in df.columns])
+
     # --- Missingness indicators + median-impute moderately-null numerics (§6)
     for col in _INDICATOR_COLS:
         if col in df.columns:
@@ -238,21 +267,20 @@ def prepare_logit_frame(X, y, groups):
     remaining = _predictor_columns(df)
     df[remaining] = df[remaining].fillna(0.0)
 
-    # Drop linearly-dependent predictors so the design (with intercept) is
-    # full rank. The county-political block shares one missing-data pattern, so
-    # its five missingness indicators are identical; DC also induces exact
-    # collinearity (requestor_type_Mayor == 1 - gubernatorial_alignment_
-    # applicable). A rank-deficient design yields a singular Hessian in the
-    # pooled fallback and degrades the variational fit.
-    df = _drop_linearly_dependent(df)
-
-    # --- Standardise continuous predictors (z-score) ----------------------
+    # --- Standardise continuous predictors (z-score) BEFORE rank-pruning ---
     # Cost/severity/margin features span many orders of magnitude (dollars in
     # the 1e8 range vs 0/1 flags). Left unscaled the linear predictor overflows
     # and the variational fit collapses onto the prior (every odds ratio == 1).
-    # Binary flags and one-hot dummies keep their natural 0/1 scale so their
-    # odds ratios read as direct category contrasts (e.g. aligned vs not);
-    # continuous predictors become per-standard-deviation effects.
+    # Standardising FIRST also puts every column on ~unit scale so the ABSOLUTE
+    # rank tolerance in _drop_linearly_dependent behaves: at raw 1e8 scale an
+    # exact dependency among the cost controls (total_cost_estimate is the
+    # generated ia+pa sum) sits far above tol=1e-8 and would go undetected.
+    # Binary flags and one-hot dummies keep their natural 0/1 scale so their odds
+    # ratios read as direct category contrasts (aligned vs not); continuous
+    # predictors become per-standard-deviation effects. (Standardisation is
+    # affine and the design carries an intercept, so it leaves the rank STRUCTURE
+    # the pruning detects unchanged — it only fixes the scale at which the
+    # tolerance operates and the conditioning the fitter sees.)
     for col in _predictor_columns(df):
         values = df[col].astype(float)
         if set(pd.unique(values.dropna())).issubset({0.0, 1.0}):
@@ -260,6 +288,15 @@ def prepare_logit_frame(X, y, groups):
         std = values.std()
         if std > 0:
             df[col] = (values - values.mean()) / std
+
+    # Drop linearly-dependent predictors so the design (with intercept) is full
+    # rank. Now runs on unit-scale columns so the absolute tolerance is
+    # meaningful. The county-political block shares one missing-data pattern, so
+    # its five missingness indicators are identical; DC also induces exact
+    # collinearity (requestor_type_Mayor == 1 - gubernatorial_alignment_
+    # applicable). A rank-deficient design yields a singular Hessian in the
+    # pooled fallback and degrades the variational fit.
+    df = _drop_linearly_dependent(df)
 
     return df
 
@@ -314,6 +351,22 @@ def _fit_pooled(frame):
         return sm.Logit(target, design).fit(disp=False, maxiter=200)
     except Exception:
         return sm.Logit(target, design).fit_regularized(alpha=1.0, disp=False)
+
+
+def fit_pooled_logit(frame):
+    """Fit the pooled (single-level) Logit on the M1 design as a robustness check.
+
+    Public entry to the same pooled-Logit path the mixed fit falls back to. Used
+    by the runner to produce Wald-based odds-ratio intervals on the SAME design as
+    the variational fit, so the (anti-conservative) VB credible intervals can be
+    cross-checked against frequentist Wald intervals.
+
+    Args:
+        frame: output of prepare_logit_frame.
+    Returns:
+        A fitted statsmodels Logit results object; read it via odds_ratio_table.
+    """
+    return _fit_pooled(frame)
 
 
 def _clean_name(name):
