@@ -17,7 +17,6 @@ import sqlite3
 import pandas as pd
 
 DEFAULT_DB = "data/pda.db"
-FLAGS = ["state_party_match", "governor_vs_president", "county_party_match"]
 
 
 def crosstab_denial_rate(df, flag_col):

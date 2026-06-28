@@ -10,7 +10,6 @@ Changelog:
 import argparse
 
 import numpy as np
-import pandas as pd
 
 from pda.modeling import assemble, model2_gbm, model3_county
 

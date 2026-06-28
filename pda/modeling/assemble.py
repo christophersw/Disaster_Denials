@@ -13,6 +13,8 @@ Changelog:
                 instruction (needed by Model 1 as a year random-effect key).
 """
 
+import warnings
+
 import pandas as pd
 
 from pda.modeling import county_features, data, features, jurisdiction
@@ -88,6 +90,30 @@ def assemble_features(db_path=data.DEFAULT_DB):
         + ENRICHMENT + JURISDICTION + IA_DEMOGRAPHIC_BLOCK
     )
     keep = [c for c in keep if c in frame.columns]
+
+    # Hard guard: POLITICAL_STATE and POLITICAL_COUNTY are the study's key
+    # measurement blocks. A silent upstream rename would quietly weaken the
+    # political ablation, biasing toward "politics doesn't matter". Fail loudly.
+    _missing_political = [
+        c for c in POLITICAL_STATE + POLITICAL_COUNTY if c not in frame.columns
+    ]
+    if _missing_political:
+        raise ValueError(
+            f"assemble_features: required political columns missing from frame: "
+            f"{_missing_political}. Check for upstream renames."
+        )
+
+    # Soft guard: other groups may legitimately be absent (sparse enrichment,
+    # optional demographic block). Warn so the drop is never invisible.
+    _optional_groups = NEED + REQUEST + ENRICHMENT + JURISDICTION + IA_DEMOGRAPHIC_BLOCK
+    _missing_optional = [c for c in _optional_groups if c not in frame.columns]
+    if _missing_optional:
+        warnings.warn(
+            f"assemble_features: columns from optional groups dropped (not in frame): "
+            f"{_missing_optional}",
+            stacklevel=2,
+        )
+
     X = frame[keep].copy()
 
     # Coerce non-categorical columns to numeric ('' / text-nulls → NaN) so only

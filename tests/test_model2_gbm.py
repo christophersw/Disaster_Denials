@@ -45,3 +45,9 @@ def test_political_ablation_keys():
     out = model2_gbm.political_ablation(X, y, groups)
     for key in ["full_pr_auc", "reduced_pr_auc", "full_roc_auc", "reduced_roc_auc", "delta", "delta_ci"]:
         assert key in out
+    # Value-sanity: PR-AUC scores must be valid probabilities.
+    assert 0.0 <= out["full_pr_auc"] <= 1.0, f"full_pr_auc out of range: {out['full_pr_auc']}"
+    assert 0.0 <= out["reduced_pr_auc"] <= 1.0, f"reduced_pr_auc out of range: {out['reduced_pr_auc']}"
+    # delta_ci must be a 2-tuple with lo <= hi.
+    lo, hi = out["delta_ci"]
+    assert lo <= hi, f"delta_ci lo > hi: {lo} > {hi}"

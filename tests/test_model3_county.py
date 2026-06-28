@@ -28,3 +28,9 @@ def test_county_ablation_keys():
     out = model3_county.county_ablation(X, y, groups)
     for key in ["m2_pr_auc", "m3_pr_auc", "delta", "delta_ci"]:
         assert key in out
+    # Value-sanity: PR-AUC scores must be valid probabilities.
+    assert 0.0 <= out["m2_pr_auc"] <= 1.0, f"m2_pr_auc out of range: {out['m2_pr_auc']}"
+    assert 0.0 <= out["m3_pr_auc"] <= 1.0, f"m3_pr_auc out of range: {out['m3_pr_auc']}"
+    # delta_ci must be a 2-tuple with lo <= hi.
+    lo, hi = out["delta_ci"]
+    assert lo <= hi, f"delta_ci lo > hi: {lo} > {hi}"
