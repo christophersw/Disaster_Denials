@@ -31,10 +31,11 @@ def _classify(state_abbr, requestor_type):
     Returns:
         One of 'tribal', 'territory', 'federal_district', 'state'.
     """
-    title = (requestor_type or "").lower()
+    # Guard against pandas NaN (float) — coerce non-string values to "".
+    title = (requestor_type if isinstance(requestor_type, str) else "").lower()
     if any(marker in title for marker in _TRIBAL_MARKERS):
         return "tribal"
-    code = (state_abbr or "").upper()
+    code = (state_abbr if isinstance(state_abbr, str) else "").upper()
     if code in DISTRICT_ABBRS:
         return "federal_district"
     if code in TERRITORY_ABBRS:
