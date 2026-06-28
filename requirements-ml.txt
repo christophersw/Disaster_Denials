@@ -1,0 +1,11 @@
+# Modeling stack for the PDA decision models (docs/superpowers/specs/2026-06-28-...).
+# Python 3.14 — versions are floors chosen to pull cp314 wheels where available.
+-r requirements.txt
+pandas>=2.2
+scikit-learn>=1.5
+statsmodels>=0.14
+# shap 0.52.0 ships a cp312-abi3 (stable-ABI) wheel — no native cp314 wheel, but the
+#   abi3 wheel installs and imports cleanly on Python 3.14.6 (arm64).
+shap>=0.46
+pytest>=8.0
+matplotlib>=3.8
