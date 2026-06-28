@@ -92,16 +92,16 @@ def county_composition_features(county_df):
         if len(valid) == 0:
             won_share = np.nan
             max_margin = np.nan
-            any_20 = 0
+            any_20 = np.nan
             dispersion = np.nan
-            won_worst = 0
+            won_worst = np.nan
         else:
             won_share = float((valid > 0).mean())
             max_margin = float(valid.max())
             any_20 = int((valid >= 20).any())
             dispersion = float(valid.std(ddof=0))
-            worst_idx = impacts.idxmax()
-            worst_margin = margins.get(worst_idx, np.nan)
+            pos = int(impacts.to_numpy().argmax())
+            worst_margin = margins.iloc[pos]
             won_worst = int(pd.notna(worst_margin) and worst_margin > 0)
         rows[source_pdf] = {
             "num_affected_counties": int(len(grp)),
