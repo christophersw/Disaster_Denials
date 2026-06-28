@@ -70,9 +70,14 @@ def county_composition_features(county_df):
     Produces seven features per disaster that separate the "one stronghold
     county" hypothesis from the "most counties favored him" hypothesis.
 
+    Note: county_margin is stored as a fraction (e.g. 0.20 = 20 percentage
+    points). The pres_won_any_county_by_20plus field uses a threshold of 0.20
+    (not 20) to match the fraction scale.
+
     Args:
         county_df (pandas.DataFrame): Rows with columns source_pdf,
-            county_margin, and per_capita_impact.
+            county_margin (fraction, range roughly −1 to 1), and
+            per_capita_impact.
 
     Returns:
         pandas.DataFrame: One row per disaster indexed by source_pdf with
@@ -98,7 +103,7 @@ def county_composition_features(county_df):
         else:
             won_share = float((valid > 0).mean())
             max_margin = float(valid.max())
-            any_20 = int((valid >= 20).any())
+            any_20 = int((valid >= 0.20).any())  # threshold is a fraction (0.20 ≈ 20 pts)
             dispersion = float(valid.std(ddof=0))
             pos = int(impacts.to_numpy().argmax())
             worst_margin = margins.iloc[pos]

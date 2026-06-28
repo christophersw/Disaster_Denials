@@ -88,12 +88,17 @@ def add_election_features(df, date_col="request_date"):
     return out
 
 
-def add_swing_state(df, threshold=8.0):
+def add_swing_state(df, threshold=0.08):
     """Add swing_state = 1 when |state_margin| < threshold, else 0 (null → 0).
 
+    Note: state_margin is stored as a fraction (e.g. 0.08 = 8 percentage
+    points), not as percentage points.  The threshold is likewise in fraction
+    units; the default 0.08 corresponds to an 8-point competitive margin.
+
     Args:
-        df: frame with numeric 'state_margin' (percentage points).
-        threshold: competitiveness cutoff in points (default 8.0; see §5.6).
+        df: frame with numeric 'state_margin' (fraction, range roughly −1 to 1).
+        threshold: competitiveness cutoff as a fraction (default 0.08 ≈ 8 pts;
+            see §5.6).
     Returns:
         Copy of df with an int 'swing_state' column.
     """
@@ -103,13 +108,15 @@ def add_swing_state(df, threshold=8.0):
     return out
 
 
-def add_enrichment_features(df, swing_threshold=8.0):
+def add_enrichment_features(df, swing_threshold=0.08):
     """Apply request_profile + election + swing-state features in one call.
 
     Args:
         df: frame with 'ia_requested', 'pa_requested', 'request_date',
             and 'state_margin' columns.
-        swing_threshold: competitiveness cutoff passed to add_swing_state.
+        swing_threshold: competitiveness cutoff passed to add_swing_state,
+            expressed as a fraction (default 0.08 ≈ 8 percentage points;
+            state_margin is stored as a fraction, not percentage points).
     Returns:
         Copy of df with all enrichment columns applied.
     """

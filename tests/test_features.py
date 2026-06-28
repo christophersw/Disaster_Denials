@@ -40,6 +40,8 @@ def test_election_features_presidential_year():
 
 
 def test_swing_state_threshold():
-    df = pd.DataFrame({"state_margin": [3.0, -2.0, 25.0, None]})
-    out = add_swing_state(df, threshold=8.0)
+    # state_margin is stored as a fraction; threshold is likewise fractional.
+    # 0.03 and -0.02 are within 0.08 → swing; 0.25 is not; None → 0.
+    df = pd.DataFrame({"state_margin": [0.03, -0.02, 0.25, None]})
+    out = add_swing_state(df, threshold=0.08)
     assert out["swing_state"].tolist() == [1, 1, 0, 0]  # null → 0 (not swing)

@@ -58,6 +58,17 @@ def test_all_nan_margin_group():
     assert pd.isna(row["pres_won_most_damaged_county"])
 
 
+def test_any_county_by_20plus_uses_fraction_threshold():
+    # county_margin is a fraction; pres_won_any_county_by_20plus threshold is 0.20.
+    # 0.25 >= 0.20 → 1; 0.15 < 0.20 → 0.
+    won = pd.DataFrame({"source_pdf": ["x"], "county_margin": [0.25],
+                        "per_capita_impact": [1.0]})
+    assert county_composition_features(won).loc["x", "pres_won_any_county_by_20plus"] == 1
+    notwon = pd.DataFrame({"source_pdf": ["y"], "county_margin": [0.15],
+                           "per_capita_impact": [1.0]})
+    assert county_composition_features(notwon).loc["y", "pres_won_any_county_by_20plus"] == 0
+
+
 def test_dmg_weight_falls_back_to_unweighted_when_no_impact():
     counties = pd.DataFrame(
         {
