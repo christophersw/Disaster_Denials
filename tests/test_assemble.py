@@ -38,6 +38,11 @@ def test_assembled_matrix_has_no_leakage_and_expected_columns():
         + assemble.JURISDICTION + assemble.IA_DEMOGRAPHIC_BLOCK
     )
     assert set(X.columns) <= allowed
+    # Lower-bound: representative required columns must survive into X so a
+    # future upstream rename can't silently drop a whole feature group.
+    for col in ["total_cost_estimate", "ia_requested", "state_party_match",
+                "request_year", "num_affected_counties"]:
+        assert col in X.columns, f"Required column '{col}' missing from assembled X"
 
 
 @pytest.mark.skipif(not os.path.exists(DB), reason="needs data/pda.db")

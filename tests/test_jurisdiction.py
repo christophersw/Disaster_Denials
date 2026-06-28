@@ -9,7 +9,7 @@ Changelog:
 
 import pandas as pd
 
-from pda.modeling.jurisdiction import add_jurisdiction_features
+from pda.modeling.jurisdiction import _classify, add_jurisdiction_features
 
 
 def _frame():
@@ -40,3 +40,27 @@ def test_gubernatorial_applicability():
     out = add_jurisdiction_features(_frame())
     # State + territory have governors; DC (mayor) and tribal do not.
     assert out["gubernatorial_alignment_applicable"].tolist() == [1, 1, 0, 0, 1]
+
+
+# --- NaN / None / blank guard tests for _classify ---
+
+
+def test_classify_handles_nan_state_abbr():
+    """Float NaN for state_abbr must not raise and must fall through to 'state'."""
+    assert _classify(float("nan"), "Governor") == "state"
+
+
+def test_classify_handles_none_and_blank_state_abbr():
+    """None and empty string for state_abbr must fall through to 'state'."""
+    assert _classify(None, "Governor") == "state"
+    assert _classify("", "Governor") == "state"
+
+
+def test_classify_handles_nan_requestor_type():
+    """Float NaN for requestor_type must not raise; no tribal markers → geography decides."""
+    assert _classify("TX", float("nan")) == "state"
+
+
+def test_classify_tribal_still_detected_with_valid_inputs():
+    """Tribal markers in requestor_type must still be detected even when state_abbr is NaN."""
+    assert _classify(float("nan"), "Tribal Chairman") == "tribal"
