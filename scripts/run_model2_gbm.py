@@ -37,7 +37,7 @@ def main():
     Xs = model2_gbm._slice(X, include_political=True)
     est.fit(Xs, y)
     print("\nTop features by importance:")
-    print(model2_gbm.shap_summary(est, Xs).head(15).round(4).to_string())
+    print(model2_gbm.shap_summary(est, Xs, y).head(15).round(4).to_string())
 
 
 if __name__ == "__main__":

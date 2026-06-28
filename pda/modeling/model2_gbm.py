@@ -129,7 +129,7 @@ def build_estimator():
     )
     pre = ColumnTransformer(
         transformers=[
-            ("cat", encoder, make_column_selector(dtype_include="object")),
+            ("cat", encoder, make_column_selector(dtype_exclude="number")),
         ],
         remainder="passthrough",
         verbose_feature_names_out=False,
@@ -202,7 +202,7 @@ def political_ablation(X, y, groups, n_splits=5):
     }
 
 
-def shap_summary(estimator, X):
+def shap_summary(estimator, X, y_true):
     """Return mean |SHAP| per feature, or permutation importance as a fallback.
 
     Attempts shap.TreeExplainer on the fitted HistGradientBoostingClassifier
@@ -214,9 +214,15 @@ def shap_summary(estimator, X):
     produce the encoded matrix the clf was trained on, so feature indices
     in shap_values align with X_enc.columns.
 
+    The fallback path uses y_true (the genuine ground-truth labels) so that
+    permutation importance measures "how much does shuffling a feature hurt
+    prediction of the true outcome", not "how much does shuffling hurt
+    replicating the model's own predictions" (which is meaningless).
+
     Args:
         estimator: a fitted Pipeline from build_estimator.
         X: the feature slice the estimator was fitted on (same columns).
+        y_true: array-like of true binary labels aligned to X's rows.
     Returns:
         DataFrame indexed by feature name with an 'importance' column,
         sorted descending by importance.
@@ -236,6 +242,6 @@ def shap_summary(estimator, X):
                 .sort_values("importance", ascending=False))
     except Exception:
         result = permutation_importance(
-            estimator, X, estimator.predict(X), n_repeats=10, random_state=0)
+            estimator, X, y_true, n_repeats=10, random_state=0)
         return (pd.DataFrame({"importance": result.importances_mean}, index=X.columns)
                 .sort_values("importance", ascending=False))

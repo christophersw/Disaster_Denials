@@ -43,5 +43,5 @@ def test_estimator_fits_and_predicts():
 def test_political_ablation_keys():
     X, y, groups = assemble.assemble_features("data/pda.db")
     out = model2_gbm.political_ablation(X, y, groups)
-    for key in ["full_pr_auc", "reduced_pr_auc", "delta", "delta_ci"]:
+    for key in ["full_pr_auc", "reduced_pr_auc", "full_roc_auc", "reduced_roc_auc", "delta", "delta_ci"]:
         assert key in out
