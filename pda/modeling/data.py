@@ -45,12 +45,11 @@ def load_modeling_frame(db_path=DEFAULT_DB):
         conn.close()
 
     df = df[df["report_outcome"].isin(["Declared", "Denied"])].copy()
+    df = df.set_index("source_pdf")
     target = (df["report_outcome"] == "Denied").astype(int)
     target.name = TARGET
 
-    df = df.set_index("source_pdf")
     drop = [c for c in LEAKAGE_COLUMNS if c in df.columns]
     features = df.drop(columns=drop)
 
-    target.index = df.index
     return features, target

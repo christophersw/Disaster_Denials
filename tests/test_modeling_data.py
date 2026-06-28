@@ -15,17 +15,53 @@ from pda.modeling.data import LEAKAGE_COLUMNS, load_modeling_frame
 
 
 def _tiny_db(path):
+    """Build a minimal SQLite reports table that covers all 14 leakage columns.
+
+    All 14 LEAKAGE_COLUMNS are present so the drop logic in load_modeling_frame
+    is genuinely exercised for every one of them, not just the 3 that were
+    originally included.  Non-leakage predictor columns (state_abbr,
+    pa_cost_estimate) are retained to verify they are NOT dropped.
+    """
     conn = sqlite3.connect(path)
     conn.execute(
-        "CREATE TABLE reports (source_pdf TEXT PRIMARY KEY, report_outcome, "
-        "state_abbr, disaster_number, denial_reason, pa_cost_estimate)"
+        "CREATE TABLE reports ("
+        "source_pdf TEXT PRIMARY KEY, "
+        "report_outcome, "
+        "state_abbr, "
+        "disaster_number, "
+        "denial_reason, "
+        "pa_cost_estimate, "
+        "declaration_type, "
+        "original_denial_date, "
+        "appeal_date, "
+        "decision_date, "
+        "posted_date, "
+        "report_type, "
+        "needs_review, "
+        "review_note, "
+        "parser_model, "
+        "extracted_at, "
+        "url"
+        ")"
     )
     conn.executemany(
-        "INSERT INTO reports VALUES (?,?,?,?,?,?)",
+        "INSERT INTO reports VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
-            ("a.pdf", "Declared", "TX", "DR-1", None, 100.0),
-            ("b.pdf", "Denied", "CA", None, "insufficient", 5.0),
-            ("c.pdf", "Denial of Appeal", "CA", None, "insufficient", 5.0),
+            (
+                "a.pdf", "Declared", "TX", "DR-1", None, 100.0,
+                "DR", "2020-01-01", None, "2020-03-01", "2020-04-01",
+                "Standard", 0, None, "gpt-4", "2024-01-01", "http://example.com/a",
+            ),
+            (
+                "b.pdf", "Denied", "CA", None, "insufficient", 5.0,
+                "DR", "2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01",
+                "Standard", 0, None, "gpt-4", "2024-01-01", "http://example.com/b",
+            ),
+            (
+                "c.pdf", "Denial of Appeal", "CA", None, "insufficient", 5.0,
+                "DR", "2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01",
+                "Standard", 0, None, "gpt-4", "2024-01-01", "http://example.com/c",
+            ),
         ],
     )
     conn.commit()
