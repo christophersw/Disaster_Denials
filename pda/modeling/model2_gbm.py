@@ -21,6 +21,7 @@ Description:
     IA-demographic columns are 80-93% null and can become all-null in a
     training fold when the states with demographic data land in the test fold.
 Changelog:
+    2026-06-29  Add shap_explanation; refactor shap_summary to delegate to it.
     2026-06-28  Initial version.
 """
 
@@ -202,22 +203,57 @@ def political_ablation(X, y, groups, n_splits=5):
     }
 
 
+def shap_explanation(estimator, X):
+    """Return a shap.Explanation for the fitted M2 pipeline on X.
+
+    Reuses the drop_deg -> pre -> clf chain to produce the encoded matrix the
+    classifier was trained on, runs shap.TreeExplainer on the HistGradient-
+    BoostingClassifier, and packages the positive-class SHAP values, a per-row
+    base value, the encoded feature values, and the encoded feature names into a
+    shap.Explanation (directly consumable by shap.plots.beeswarm / bar /
+    waterfall).
+
+    Args:
+        estimator: a fitted Pipeline from build_estimator.
+        X: the feature slice the estimator was fitted on (same columns).
+    Returns:
+        shap.Explanation with values (n_rows x n_encoded_features), per-row
+        base_values, data, and feature_names.
+    Raises:
+        Exception: if shap is unavailable or TreeExplainer fails for this
+        model/data (no fallback — callers that only need importances should use
+        shap_summary, which falls back to permutation importance).
+    """
+    import shap
+
+    drop_deg = estimator.named_steps["drop_deg"]
+    pre = estimator.named_steps["pre"]
+    clf = estimator.named_steps["clf"]
+    X_enc = pre.transform(drop_deg.transform(X))
+
+    explainer = shap.TreeExplainer(clf)
+    raw = explainer.shap_values(X_enc)
+    vals = np.asarray(raw[1] if isinstance(raw, list) else raw)
+
+    expected = np.ravel(explainer.expected_value)
+    base = float(expected[1] if expected.size > 1 else expected[0])
+
+    feature_names = list(X_enc.columns)
+    return shap.Explanation(
+        values=vals,
+        base_values=np.full(vals.shape[0], base),
+        data=np.asarray(X_enc),
+        feature_names=feature_names,
+    )
+
+
 def shap_summary(estimator, X, y_true):
     """Return mean |SHAP| per feature, or permutation importance as a fallback.
 
-    Attempts shap.TreeExplainer on the fitted HistGradientBoostingClassifier
-    (extracted from the pipeline via named_steps). Falls back to sklearn
-    permutation_importance if shap is unavailable or raises for this
-    model/data combination.
-
-    The SHAP path chains through all preprocessing steps (drop_deg → pre) to
-    produce the encoded matrix the clf was trained on, so feature indices
-    in shap_values align with X_enc.columns.
-
-    The fallback path uses y_true (the genuine ground-truth labels) so that
-    permutation importance measures "how much does shuffling a feature hurt
-    prediction of the true outcome", not "how much does shuffling hurt
-    replicating the model's own predictions" (which is meaningless).
+    Delegates to shap_explanation for the SHAP path (mean |SHAP| over rows).
+    Falls back to sklearn permutation_importance if shap is unavailable or
+    raises for this model/data combination. The fallback uses y_true (the true
+    labels) so it measures degradation in predicting the real outcome.
 
     Args:
         estimator: a fitted Pipeline from build_estimator.
@@ -228,17 +264,9 @@ def shap_summary(estimator, X, y_true):
         sorted descending by importance.
     """
     try:
-        import shap
-        drop_deg = estimator.named_steps["drop_deg"]
-        pre = estimator.named_steps["pre"]
-        clf = estimator.named_steps["clf"]
-        X_dropped = drop_deg.transform(X)
-        X_enc = pre.transform(X_dropped)
-        explainer = shap.TreeExplainer(clf)
-        values = explainer.shap_values(X_enc)
-        vals = values[1] if isinstance(values, list) else values
-        imp = np.abs(vals).mean(axis=0)
-        return (pd.DataFrame({"importance": imp}, index=X_enc.columns)
+        exp = shap_explanation(estimator, X)
+        imp = np.abs(exp.values).mean(axis=0)
+        return (pd.DataFrame({"importance": imp}, index=exp.feature_names)
                 .sort_values("importance", ascending=False))
     except Exception:
         result = permutation_importance(
