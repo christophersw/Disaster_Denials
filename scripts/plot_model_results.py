@@ -116,7 +116,7 @@ _M1_LAY_FACTORS = [
      "label": "State shares president's party", "contrast": "0→1",
      "category": "Political"},
     {"feature": "governor_vs_president",
-     "label": "Governor's party vs. president's", "contrast": "+1 SD",
+     "label": "Governor's party vs. president's", "contrast": "0→1",
      "category": "Political"},
     {"feature": "dmg_weighted_mean_pres_margin",
      "label": "How much worst-hit areas favored the president", "contrast": "+1 SD",
@@ -279,7 +279,11 @@ def _build_m1_lay_effects(vb_table):
         })
         labels.append(spec["label"])
 
-    effects_df = pd.DataFrame(rows, index=labels)
+    effects_df = pd.DataFrame(
+        rows, index=labels,
+        columns=["effect_pts", "range_low_pts", "range_high_pts",
+                 "unclear", "category", "contrast"],
+    )
     return effects_df, baseline_p
 
 
@@ -652,19 +656,16 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
     Returns:
         None. Saves fig6_lay_effects.png to out_dir.
     """
+    n = len(effects_df)
+    if n == 0:
+        print("  [fig6] no factors to plot; skipping fig6_lay_effects.png")
+        return
     # Sort ascending so the strongest "less likely denied" effects sit at the
     # bottom and the chart reads like a number line (negative left, positive
     # right).
     df = effects_df.sort_values("effect_pts", ascending=True)
-    n = len(df)
     y_pos = np.arange(n, dtype=float)
-
     fig, ax = plt.subplots(figsize=(10, max(4.5, n * 0.62 + 1.8)))
-
-    if n == 0:
-        print("  [fig6] no factors to plot; skipping fig6_lay_effects.png")
-        plt.close(fig)
-        return
 
     for y, (label, row) in zip(y_pos, df.iterrows()):
         colour = (_M1_LAY_UNCLEAR if row["unclear"]
@@ -720,6 +721,9 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
     ]
     ax.legend(handles=legend_handles, fontsize=8.5, loc="lower right")
 
+    # NOTE: this takeaway title encodes the CURRENT finding (political alignment
+    # shows no clear effect); it is not recomputed from effects_df. Revisit it if
+    # a future refit makes a political factor's effect clearly non-zero.
     ax.set_title(
         "What moves a FEMA denial — need and severity drive the decision;\n"
         "political alignment shows no clear effect",
