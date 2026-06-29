@@ -17,6 +17,9 @@ Description:
         fig4_feature_importance.png — top-12 M2 SHAP importances by category.
         fig5_stronghold.png         — stronghold signal comparison (two M3
                                       county-composition features).
+        fig6_lay_effects.png        — lay-reader effects: Model 1 political &
+                                      need factors as probability-point effects
+                                      on the denial rate (estimate + range).
 
     Run:
         .venv/bin/python -m scripts.plot_model_results [--db data/pda.db]
@@ -96,7 +99,7 @@ _RED = "#C0392B"
 
 # Selected factors for the lay-reader chart. Each entry maps a Model 1 design
 # feature to its plain-language label, the contrast its bar represents (+1 SD
-# for continuous predictors, which M1 z-scores; "0->1" for binary), and the
+# for continuous predictors, which M1 z-scores; "0→1" for binary), and the
 # display category that drives colour. The three Political rows are always shown
 # (their "no clear effect" is itself a finding); a feature missing from the
 # fitted odds-ratio table is skipped with a warning rather than crashing.
@@ -631,6 +634,109 @@ def plot_fig5(comp, out_dir):
     print(f"  Saved {path}")
 
 
+def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
+    """Diverging horizontal effects chart for a lay reader (Approach A2).
+
+    Each selected factor is one row: a dot at its probability-point effect on the
+    denial rate and a line for the plausible range. A vertical zero-line marks
+    "no change from baseline"; factors whose range crosses it render grey ("no
+    clear effect"). Need and Political factors are colour-coded; the baseline
+    denial rate is annotated. Continuous factors carry a small "+1 SD" note.
+
+    Args:
+        effects_df (DataFrame): from _build_m1_lay_effects; indexed by lay label
+            with effect_pts / range_low_pts / range_high_pts / unclear /
+            category / contrast columns.
+        baseline_p (float): baseline denial probability, logistic(b0).
+        out_dir (str): directory for saving the PNG.
+    Returns:
+        None. Saves fig6_lay_effects.png to out_dir.
+    """
+    # Sort ascending so the strongest "less likely denied" effects sit at the
+    # bottom and the chart reads like a number line (negative left, positive
+    # right).
+    df = effects_df.sort_values("effect_pts", ascending=True)
+    n = len(df)
+    y_pos = np.arange(n, dtype=float)
+
+    fig, ax = plt.subplots(figsize=(10, max(4.5, n * 0.62 + 1.8)))
+
+    for y, (label, row) in zip(y_pos, df.iterrows()):
+        colour = (_M1_LAY_UNCLEAR if row["unclear"]
+                  else _M1_LAY_CAT_COLOURS[row["category"]])
+        # plausible-range line + end caps
+        ax.plot([row["range_low_pts"], row["range_high_pts"]], [y, y],
+                color=colour, linewidth=2.4, alpha=0.55, zorder=3,
+                solid_capstyle="round")
+        for x in (row["range_low_pts"], row["range_high_pts"]):
+            ax.plot([x, x], [y - 0.10, y + 0.10], color=colour,
+                    linewidth=1.4, alpha=0.7, zorder=3)
+        # estimate dot
+        ax.plot(row["effect_pts"], y, "o", color=colour, markersize=10,
+                markeredgecolor="white", markeredgewidth=1.5, zorder=5)
+        # "+1 SD" unit note for continuous contrasts
+        if row["contrast"] == "+1 SD":
+            ax.text(row["effect_pts"], y + 0.28, "+1 SD", ha="center",
+                    va="bottom", fontsize=7.5, color="#888")
+
+    ax.axvline(0.0, color="black", linewidth=1.6, zorder=2)
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(df.index, fontsize=10)
+    ax.set_xlabel("Change in denial rate (percentage points)", fontsize=10.5)
+
+    span = max(
+        float(np.abs(df[["range_low_pts", "range_high_pts"]].to_numpy()).max()),
+        1.0,
+    )
+    ax.set_xlim(-span * 1.28, span * 1.28)
+    ax.set_ylim(-1.4, n - 0.4)
+
+    # direction hints under the axis
+    ax.annotate("◀ less likely denied", xy=(-span * 1.22, -1.0),
+                fontsize=9, color=_BLUE, annotation_clip=False, va="center")
+    ax.annotate("more likely denied ▶", xy=(span * 0.35, -1.0),
+                fontsize=9, color=_RED, annotation_clip=False, va="center")
+
+    # baseline callout
+    ax.text(0.99, 1.02,
+            f"Baseline: about {round(baseline_p * 100)} in 100 requests denied",
+            transform=ax.transAxes, ha="right", va="bottom", fontsize=9,
+            color="#444",
+            bbox=dict(boxstyle="round,pad=0.3", fc="#f3f4f6", ec="#ccc"))
+
+    legend_handles = [
+        mpatches.Patch(facecolor=_M1_LAY_CAT_COLOURS["Need"],
+                       label="Need / severity"),
+        mpatches.Patch(facecolor=_M1_LAY_CAT_COLOURS["Political"],
+                       label="Political / partisan"),
+        mpatches.Patch(facecolor=_M1_LAY_UNCLEAR,
+                       label="No clear effect (range crosses zero)"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=8.5, loc="lower right")
+
+    ax.set_title(
+        "What moves a FEMA denial — need and severity drive the decision;\n"
+        "political alignment shows no clear effect",
+        fontsize=12.5, fontweight="bold", pad=12,
+    )
+    ax.grid(axis="x", alpha=0.25)
+
+    fig.text(
+        0.5, -0.02,
+        "Each bar is that factor's solo effect from the baseline (logistic link, "
+        "so effects don't simply add). Ranges are Model 1 variational-Bayes "
+        "credible intervals — indicative, narrower than a full posterior.",
+        ha="center", fontsize=7.5, color="#888", wrap=True,
+    )
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "fig6_lay_effects.png")
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -645,7 +751,7 @@ def main():
 
     Args: none (reads --db from CLI, default data/pda.db).
     Returns: None.
-    Side effects: creates/overwrites five PNGs in docs/models/figures/.
+    Side effects: creates/overwrites six PNGs in docs/models/figures/.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -675,6 +781,16 @@ def main():
     n_l1 = int(combined_m1["l1_zeroed"].sum())
     print(f"  Political features in table: {len(combined_m1)}  "
           f"L1-zeroed: {n_l1}")
+
+    # ---- fig6 lay-reader effects (reuses the VB table above) ---------------
+    effects_df, baseline_p = _build_m1_lay_effects(vb_table)
+    estimand_rate = float(frame["denied"].mean())
+    print(f"  fig6: baseline_p={baseline_p:.3f} "
+          f"(M1 estimand denial rate={estimand_rate:.3f}); "
+          f"{len(effects_df)} lay factors")
+    if abs(baseline_p - estimand_rate) > 0.05:
+        print(f"  [fig6 WARNING] model baseline {baseline_p:.3f} diverges from "
+              f"observed estimand rate {estimand_rate:.3f} by >5 points")
 
     # ---- Model 2: political ablation + SHAP --------------------------------
     print("\nModel 2: political ablation (CV ~30 s) ...")
@@ -723,8 +839,9 @@ def main():
     plot_fig3(combined_m1, FIGURES_DIR)
     plot_fig4(imp2, FIGURES_DIR)
     plot_fig5(comp, FIGURES_DIR)
+    plot_fig6_lay_effects(effects_df, baseline_p, FIGURES_DIR)
 
-    print(f"\nAll 5 charts saved to {FIGURES_DIR}/")
+    print(f"\nAll 6 charts saved to {FIGURES_DIR}/")
 
 
 if __name__ == "__main__":

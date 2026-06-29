@@ -91,8 +91,11 @@ def test_unclear_when_ci_crosses_one():
     assert row["range_low_pts"] < 0 < row["range_high_pts"]
 
 
-def test_missing_feature_is_skipped_not_fatal():
-    """A selected feature absent from the table is dropped, others survive."""
+def test_missing_feature_is_skipped_not_fatal(capsys):
+    """A selected feature absent from the table is dropped, others survive.
+
+    Also verifies that the skipped feature name appears in the printed warning.
+    """
     rows = {"Intercept": (0.1 / 0.9, 0.1 / 0.9, 0.1 / 0.9)}
     # include all but the first selected factor
     for spec in _M1_LAY_FACTORS[1:]:
@@ -100,6 +103,8 @@ def test_missing_feature_is_skipped_not_fatal():
     effects, _ = _build_m1_lay_effects(_table(rows))
     assert _M1_LAY_FACTORS[0]["label"] not in effects.index
     assert len(effects) == len(_M1_LAY_FACTORS) - 1
+    captured = capsys.readouterr()
+    assert _M1_LAY_FACTORS[0]["feature"] in captured.out
 
 
 def test_full_table_yields_all_factors_with_columns():
@@ -109,3 +114,34 @@ def test_full_table_yields_all_factors_with_columns():
     for col in ("effect_pts", "range_low_pts", "range_high_pts",
                 "unclear", "category", "contrast"):
         assert col in effects.columns
+
+
+def test_plot_fig6_writes_png(tmp_path):
+    """Rendering a small synthetic effects frame produces the PNG file."""
+    from scripts.plot_model_results import plot_fig6_lay_effects
+
+    effects_df = pd.DataFrame(
+        {
+            "effect_pts":     [-5.0, 0.3],
+            "range_low_pts":  [-7.0, -1.2],
+            "range_high_pts": [-3.0, 1.8],
+            "unclear":        [False, True],
+            "category":       ["Need", "Political"],
+            "contrast":       ["+1 SD", "0→1"],
+        },
+        index=["Total damage (disaster size)", "State shares president's party"],
+    )
+    plot_fig6_lay_effects(effects_df, 0.08, str(tmp_path))
+    assert (tmp_path / "fig6_lay_effects.png").exists()
+
+
+def test_const_intercept_fallback():
+    """baseline_p is correct when intercept row is keyed 'const', not 'Intercept'."""
+    const_odds = 0.25 / 0.75   # odds for p = 0.25
+    table = _table({
+        "const": (const_odds, const_odds, const_odds),
+        "total_cost_estimate": (0.8, 0.6, 0.95),
+    })
+    _, baseline_p = _build_m1_lay_effects(table)
+    expected = _logistic(np.log(const_odds))
+    assert baseline_p == pytest.approx(expected, abs=1e-6)
