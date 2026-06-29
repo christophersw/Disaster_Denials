@@ -67,3 +67,43 @@ def test_plot_confusion_matrices_writes_png(tmp_path):
     proba = np.concatenate([rng.uniform(0, 0.7, 80), rng.uniform(0.3, 1.0, 20)])
     plot_confusion_matrices(y, proba, f1_max_threshold(y, proba), str(tmp_path))
     assert (tmp_path / "m2_confusion_matrices.png").exists()
+
+
+def _synthetic_explanation(n_rows=40, n_feat=6):
+    """Build a small valid shap.Explanation for rendering smoke tests."""
+    import shap
+
+    rng = np.random.default_rng(3)
+    values = rng.normal(size=(n_rows, n_feat))
+    data = rng.normal(size=(n_rows, n_feat))
+    return shap.Explanation(
+        values=values,
+        base_values=np.full(n_rows, 0.1),
+        data=data,
+        feature_names=[f"feature_{i}" for i in range(n_feat)],
+    )
+
+
+def test_plot_shap_beeswarm_writes_png(tmp_path):
+    from scripts.plot_gbm_diagnostics import plot_shap_beeswarm
+    plot_shap_beeswarm(_synthetic_explanation(), str(tmp_path))
+    assert (tmp_path / "m2_shap_beeswarm.png").exists()
+
+
+def test_plot_shap_mean_bar_writes_png(tmp_path):
+    from scripts.plot_gbm_diagnostics import plot_shap_mean_bar
+    plot_shap_mean_bar(_synthetic_explanation(), str(tmp_path))
+    assert (tmp_path / "m2_shap_mean_bar.png").exists()
+
+
+def test_plot_shap_waterfalls_writes_png(tmp_path):
+    from scripts.plot_gbm_diagnostics import (
+        plot_shap_waterfalls,
+        select_waterfall_cases,
+    )
+    exp = _synthetic_explanation()
+    y = np.array([0, 1] * 20)
+    proba = np.linspace(0.05, 0.95, 40)
+    cases = select_waterfall_cases(y, proba, n_per_class=2, seed=0)
+    plot_shap_waterfalls(exp, cases, str(tmp_path))
+    assert (tmp_path / "m2_shap_waterfalls.png").exists()

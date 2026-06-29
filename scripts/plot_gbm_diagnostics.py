@@ -201,3 +201,94 @@ def plot_confusion_matrices(y, proba, thr_info, out_dir):
     fig.savefig(path, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved {path}")
+
+
+def plot_shap_beeswarm(explanation, out_dir):
+    """SHAP beeswarm summary (top-TOP_N features) for the full-data fit.
+
+    Args:
+        explanation: a shap.Explanation from model2_gbm.shap_explanation.
+        out_dir: directory for the PNG.
+    Returns:
+        None. Saves m2_shap_beeswarm.png to out_dir.
+    """
+    import shap
+
+    plt.figure()
+    shap.plots.beeswarm(explanation, max_display=TOP_N, show=False)
+    fig = plt.gcf()
+    fig.suptitle("Model 2 — SHAP summary (beeswarm)", fontsize=12, fontweight="bold")
+    path = os.path.join(out_dir, "m2_shap_beeswarm.png")
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
+def plot_shap_mean_bar(explanation, out_dir):
+    """Mean |SHAP| bar (top-TOP_N features) for the full-data fit.
+
+    Args:
+        explanation: a shap.Explanation from model2_gbm.shap_explanation.
+        out_dir: directory for the PNG.
+    Returns:
+        None. Saves m2_shap_mean_bar.png to out_dir.
+    """
+    import shap
+
+    plt.figure()
+    shap.plots.bar(explanation, max_display=TOP_N, show=False)
+    fig = plt.gcf()
+    fig.suptitle("Model 2 — mean |SHAP| importance", fontsize=12, fontweight="bold")
+    path = os.path.join(out_dir, "m2_shap_mean_bar.png")
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
+def plot_shap_waterfalls(explanation, cases, out_dir):
+    """Compose per-case SHAP waterfalls into a single 2x2 grid figure.
+
+    Each waterfall is rendered to its own temporary PNG (SHAP's waterfall owns
+    its figure and does not compose into shared subplots), then the panels are
+    assembled into one 2x2 image grid via imshow — robust against SHAP's
+    axes handling.
+
+    Args:
+        explanation: a shap.Explanation from model2_gbm.shap_explanation.
+        cases: list of dicts from select_waterfall_cases (index/outcome/proba).
+        out_dir: directory for the PNG.
+    Returns:
+        None. Saves m2_shap_waterfalls.png to out_dir.
+    """
+    import shap
+
+    panels = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, case in enumerate(cases):
+            plt.figure()
+            shap.plots.waterfall(explanation[case["index"]], max_display=10,
+                                 show=False)
+            fig = plt.gcf()
+            fig.suptitle(
+                f"{case['outcome']} — predicted P(denied) = {case['proba']:.2f}",
+                fontsize=11, fontweight="bold",
+            )
+            panel_path = os.path.join(tmp, f"w{i}.png")
+            fig.savefig(panel_path, dpi=DPI, bbox_inches="tight")
+            plt.close(fig)
+            panels.append(plt.imread(panel_path))
+
+        fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+        flat = axes.ravel()
+        for ax, img in zip(flat, panels):
+            ax.imshow(img)
+            ax.axis("off")
+        for ax in flat[len(panels):]:
+            ax.axis("off")
+        fig.suptitle("Model 2 — SHAP waterfalls (individual cases)",
+                     fontsize=14, fontweight="bold")
+        fig.tight_layout()
+        path = os.path.join(out_dir, "m2_shap_waterfalls.png")
+        fig.savefig(path, dpi=DPI, bbox_inches="tight")
+        plt.close(fig)
+    print(f"  Saved {path}")
