@@ -42,3 +42,28 @@ def test_select_waterfall_cases_is_reproducible_and_correct_class():
     assert all(y[c["index"]] == 1 for c in denied)
     assert all(y[c["index"]] == 0 for c in approved)
     assert all(c["proba"] == proba[c["index"]] for c in a)
+
+
+def test_plot_pr_curve_writes_png(tmp_path):
+    """PR-curve render writes its PNG from synthetic oof predictions."""
+    from scripts.plot_gbm_diagnostics import f1_max_threshold, plot_pr_curve
+
+    rng = np.random.default_rng(1)
+    y = np.array([0] * 80 + [1] * 20)
+    proba = np.concatenate([rng.uniform(0, 0.7, 80), rng.uniform(0.3, 1.0, 20)])
+    plot_pr_curve(y, proba, f1_max_threshold(y, proba), str(tmp_path))
+    assert (tmp_path / "m2_pr_curve.png").exists()
+
+
+def test_plot_confusion_matrices_writes_png(tmp_path):
+    """Confusion-matrix render writes its PNG from synthetic oof predictions."""
+    from scripts.plot_gbm_diagnostics import (
+        f1_max_threshold,
+        plot_confusion_matrices,
+    )
+
+    rng = np.random.default_rng(2)
+    y = np.array([0] * 80 + [1] * 20)
+    proba = np.concatenate([rng.uniform(0, 0.7, 80), rng.uniform(0.3, 1.0, 20)])
+    plot_confusion_matrices(y, proba, f1_max_threshold(y, proba), str(tmp_path))
+    assert (tmp_path / "m2_confusion_matrices.png").exists()

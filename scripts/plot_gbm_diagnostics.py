@@ -113,3 +113,91 @@ def select_waterfall_cases(y, proba, n_per_class=2, seed=0):
             "proba": float(proba[idx]),
         })
     return cases
+
+
+def plot_pr_curve(y, proba, thr_info, out_dir):
+    """Plot the out-of-fold precision-recall curve with AP and the F1-max point.
+
+    Args:
+        y: int array-like of true labels.
+        proba: array-like of out-of-fold P(denied).
+        thr_info: dict from f1_max_threshold (threshold/precision/recall/f1).
+        out_dir: directory for the PNG.
+    Returns:
+        None. Saves m2_pr_curve.png to out_dir.
+    """
+    y = np.asarray(y)
+    precision, recall, _ = precision_recall_curve(y, proba)
+    ap = average_precision_score(y, proba)
+    prevalence = float(y.mean())
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.plot(recall, precision, color=_BLUE, lw=2, label=f"PR curve (AP = {ap:.3f})")
+    ax.axhline(prevalence, ls="--", color="gray", lw=1.3,
+               label=f"baseline (prevalence = {prevalence:.3f})")
+    ax.plot(thr_info["recall"], thr_info["precision"], "o", color=_RED, ms=10,
+            zorder=5,
+            label=(f"F1-max (thr = {thr_info['threshold']:.2f}, "
+                   f"F1 = {thr_info['f1']:.2f})"))
+    ax.set_xlabel("Recall", fontsize=11)
+    ax.set_ylabel("Precision", fontsize=11)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.02)
+    ax.set_title("Model 2 — precision–recall (out-of-fold)",
+                 fontsize=12, fontweight="bold")
+    ax.legend(loc="upper right", fontsize=9)
+    ax.grid(alpha=0.3)
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "m2_pr_curve.png")
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
+def plot_confusion_matrices(y, proba, thr_info, out_dir):
+    """Plot side-by-side confusion matrices at threshold 0.50 and F1-max.
+
+    Args:
+        y: int array-like of true labels.
+        proba: array-like of out-of-fold P(denied).
+        thr_info: dict from f1_max_threshold.
+        out_dir: directory for the PNG.
+    Returns:
+        None. Saves m2_confusion_matrices.png to out_dir.
+    """
+    y = np.asarray(y)
+    panels = [
+        ("Threshold = 0.50", 0.5),
+        (f"Threshold = {thr_info['threshold']:.2f} (F1-max)", thr_info["threshold"]),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    for ax, (title, thr) in zip(axes, panels):
+        pred = (np.asarray(proba) >= thr).astype(int)
+        cm = confusion_matrix(y, pred, labels=[0, 1])
+        ax.imshow(cm, cmap="Blues")
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["Approved", "Denied"])
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["Approved", "Denied"])
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Actual")
+        cutoff = cm.max() / 2.0
+        for i in range(2):
+            for j in range(2):
+                ax.text(j, i, f"{cm[i, j]:d}", ha="center", va="center",
+                        color="white" if cm[i, j] > cutoff else "black",
+                        fontsize=13, fontweight="bold")
+        prec = precision_score(y, pred, zero_division=0)
+        rec = recall_score(y, pred, zero_division=0)
+        f1 = f1_score(y, pred, zero_division=0)
+        ax.set_title(f"{title}\nprecision = {prec:.2f}   recall = {rec:.2f}   "
+                     f"F1 = {f1:.2f}", fontsize=10)
+
+    fig.suptitle("Model 2 — confusion matrices (out-of-fold)",
+                 fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    path = os.path.join(out_dir, "m2_confusion_matrices.png")
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {path}")
