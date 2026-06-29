@@ -47,6 +47,8 @@ FIGURES_DIR = "docs/models/figures"
 DPI = 150
 # Number of features to show in the SHAP summary plots.
 TOP_N = 12
+# Features shown per individual SHAP waterfall panel.
+_WATERFALL_MAX_DISPLAY = 10
 # Per-class count and RNG seed for the waterfall case selection.
 N_PER_CLASS = 2
 SEED = 0
@@ -263,7 +265,7 @@ def plot_shap_waterfalls(explanation, cases, out_dir) -> None:
     panels = []
     with tempfile.TemporaryDirectory() as tmp:
         for i, case in enumerate(cases):
-            shap.plots.waterfall(explanation[case["index"]], max_display=10,
+            shap.plots.waterfall(explanation[case["index"]], max_display=_WATERFALL_MAX_DISPLAY,
                                  show=False)
             fig = plt.gcf()
             fig.suptitle(
@@ -321,6 +323,10 @@ def main():
     # have no state_abbr; StratifiedGroupKFold cannot sort a mixed float-NaN /
     # str groups array on numpy >= 2.x. Mirrors the filter in political_ablation.
     valid_mask = groups.notna().values
+    n_dropped = int((~valid_mask).sum())
+    if n_dropped:
+        print(f"  Dropping {n_dropped} rows with null state (tribal/territory) "
+              f"for grouped CV")
     Xs2_valid = Xs2.iloc[valid_mask]
     y_valid = y_arr[valid_mask]
     groups_valid = groups.values[valid_mask]

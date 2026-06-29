@@ -1,3 +1,4 @@
+# tests/test_gbm_diagnostics.py
 """
 Title: tests/test_gbm_diagnostics.py — Tests for the GBM diagnostic helpers/plots.
 Description: Fast unit tests for f1_max_threshold and select_waterfall_cases, plus
@@ -37,6 +38,7 @@ def test_select_waterfall_cases_is_reproducible_and_correct_class():
     a = select_waterfall_cases(y, proba, n_per_class=2, seed=0)
     b = select_waterfall_cases(y, proba, n_per_class=2, seed=0)
     assert [c["index"] for c in a] == [c["index"] for c in b]   # reproducible
+    assert [c["outcome"] for c in a] == ["Denied", "Denied", "Approved", "Approved"]
     denied = [c for c in a if c["outcome"] == "Denied"]
     approved = [c for c in a if c["outcome"] == "Approved"]
     assert len(denied) == 2 and len(approved) == 2

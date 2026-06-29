@@ -32,6 +32,7 @@ def test_shap_explanation_shape_matches_input():
     assert exp.values.shape[1] == len(exp.feature_names)
     assert np.isfinite(np.asarray(exp.base_values)).all()
     assert np.asarray(exp.base_values).shape[0] == len(Xs2)
+    assert np.asarray(exp.data).shape == exp.values.shape
 
 
 @pytest.mark.skipif(not os.path.exists("data/pda.db"), reason="needs data/pda.db")
