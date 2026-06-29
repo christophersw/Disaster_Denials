@@ -203,7 +203,7 @@ def plot_confusion_matrices(y, proba, thr_info, out_dir):
     print(f"  Saved {path}")
 
 
-def plot_shap_beeswarm(explanation, out_dir):
+def plot_shap_beeswarm(explanation, out_dir) -> None:
     """SHAP beeswarm summary (top-TOP_N features) for the full-data fit.
 
     Args:
@@ -214,7 +214,6 @@ def plot_shap_beeswarm(explanation, out_dir):
     """
     import shap
 
-    plt.figure()
     shap.plots.beeswarm(explanation, max_display=TOP_N, show=False)
     fig = plt.gcf()
     fig.suptitle("Model 2 — SHAP summary (beeswarm)", fontsize=12, fontweight="bold")
@@ -224,7 +223,7 @@ def plot_shap_beeswarm(explanation, out_dir):
     print(f"  Saved {path}")
 
 
-def plot_shap_mean_bar(explanation, out_dir):
+def plot_shap_mean_bar(explanation, out_dir) -> None:
     """Mean |SHAP| bar (top-TOP_N features) for the full-data fit.
 
     Args:
@@ -235,7 +234,6 @@ def plot_shap_mean_bar(explanation, out_dir):
     """
     import shap
 
-    plt.figure()
     shap.plots.bar(explanation, max_display=TOP_N, show=False)
     fig = plt.gcf()
     fig.suptitle("Model 2 — mean |SHAP| importance", fontsize=12, fontweight="bold")
@@ -245,7 +243,7 @@ def plot_shap_mean_bar(explanation, out_dir):
     print(f"  Saved {path}")
 
 
-def plot_shap_waterfalls(explanation, cases, out_dir):
+def plot_shap_waterfalls(explanation, cases, out_dir) -> None:
     """Compose per-case SHAP waterfalls into a single 2x2 grid figure.
 
     Each waterfall is rendered to its own temporary PNG (SHAP's waterfall owns
@@ -265,7 +263,6 @@ def plot_shap_waterfalls(explanation, cases, out_dir):
     panels = []
     with tempfile.TemporaryDirectory() as tmp:
         for i, case in enumerate(cases):
-            plt.figure()
             shap.plots.waterfall(explanation[case["index"]], max_display=10,
                                  show=False)
             fig = plt.gcf()
