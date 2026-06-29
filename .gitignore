@@ -232,3 +232,6 @@ data/pda_county_fips_llm_matches.csv
 # Microsoft Office temporary lock files
 ~$*
 .DS_Store
+
+# Visual brainstorming companion (superpowers)
+.superpowers/
