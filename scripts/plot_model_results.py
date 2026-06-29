@@ -123,9 +123,10 @@ _M1_LAY_FACTORS = [
      "category": "Political"},
 ]
 
-# Category colours for fig6 (aligned with fig4's palette).
-_M1_LAY_CAT_COLOURS = {"Need": _ORANGE, "Political": _RED}
-# Greyed colour for factors whose plausible range crosses zero (no clear effect).
+# fig6 encodes certainty, not category: one colour for a clear effect and grey
+# for "no clear effect" (range crosses zero). (The `category` field on each
+# factor is retained as metadata but no longer drives colour.)
+_M1_LAY_EFFECT = _ORANGE
 _M1_LAY_UNCLEAR = "#9aa0a6"
 
 
@@ -644,8 +645,9 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
     Each selected factor is one row: a dot at its probability-point effect on the
     denial rate and a line for the plausible range. A vertical zero-line marks
     "no change from baseline"; factors whose range crosses it render grey ("no
-    clear effect"). Need and Political factors are colour-coded; the baseline
-    denial rate is annotated. Continuous factors carry a small "+1 SD" note.
+    clear effect") while factors with a clear effect share a single colour. The
+    baseline denial rate is annotated. Continuous factors carry a small "+1 SD"
+    note.
 
     Args:
         effects_df (DataFrame): from _build_m1_lay_effects; indexed by lay label
@@ -668,8 +670,7 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
     fig, ax = plt.subplots(figsize=(10, max(4.5, n * 0.62 + 1.8)))
 
     for y, (label, row) in zip(y_pos, df.iterrows()):
-        colour = (_M1_LAY_UNCLEAR if row["unclear"]
-                  else _M1_LAY_CAT_COLOURS[row["category"]])
+        colour = _M1_LAY_UNCLEAR if row["unclear"] else _M1_LAY_EFFECT
         # plausible-range line + end caps
         ax.plot([row["range_low_pts"], row["range_high_pts"]], [y, y],
                 color=colour, linewidth=2.4, alpha=0.55, zorder=3,
@@ -713,19 +714,14 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
             bbox=dict(boxstyle="round,pad=0.3", fc="#f3f4f6", ec="#ccc"))
 
     # Build the legend from the colours ACTUALLY drawn so it never promises a
-    # swatch with no member. A category gets its colour key only if at least one
-    # of its factors has a clear effect (unclear factors render grey regardless
-    # of category), and the grey key appears only if some factor is unclear.
-    need_clear = bool(((df["category"] == "Need") & ~df["unclear"]).any())
-    pol_clear = bool(((df["category"] == "Political") & ~df["unclear"]).any())
+    # swatch with no member: an "Effect" key only if some factor has a clear
+    # effect, and the grey key only if some factor is unclear.
+    any_clear = bool((~df["unclear"]).any())
     any_unclear = bool(df["unclear"].any())
     legend_handles = []
-    if need_clear:
+    if any_clear:
         legend_handles.append(mpatches.Patch(
-            facecolor=_M1_LAY_CAT_COLOURS["Need"], label="Need / severity"))
-    if pol_clear:
-        legend_handles.append(mpatches.Patch(
-            facecolor=_M1_LAY_CAT_COLOURS["Political"], label="Political / partisan"))
+            facecolor=_M1_LAY_EFFECT, label="Effect"))
     if any_unclear:
         legend_handles.append(mpatches.Patch(
             facecolor=_M1_LAY_UNCLEAR, label="No clear effect (range crosses zero)"))
