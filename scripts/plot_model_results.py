@@ -26,6 +26,7 @@ Description:
 
 Changelog:
     2026-06-28  Initial version.
+    2026-06-29  Add fig6 lay-reader effects helper + chart.
 """
 
 import argparse
@@ -88,6 +89,41 @@ _CAT_COLOURS = {
 _BLUE = "#2E86AB"
 _ORANGE = "#E07B39"
 _RED = "#C0392B"
+
+# ---------------------------------------------------------------------------
+# fig6 — lay-reader effects (Model 1) constants
+# ---------------------------------------------------------------------------
+
+# Selected factors for the lay-reader chart. Each entry maps a Model 1 design
+# feature to its plain-language label, the contrast its bar represents (+1 SD
+# for continuous predictors, which M1 z-scores; "0->1" for binary), and the
+# display category that drives colour. The three Political rows are always shown
+# (their "no clear effect" is itself a finding); a feature missing from the
+# fitted odds-ratio table is skipped with a warning rather than crashing.
+_M1_LAY_FACTORS = [
+    {"feature": "total_cost_estimate",
+     "label": "Total damage (disaster size)", "contrast": "+1 SD", "category": "Need"},
+    {"feature": "num_affected_counties",
+     "label": "Number of counties hit", "contrast": "+1 SD", "category": "Need"},
+    {"feature": "ia_residences_total",
+     "label": "Homes damaged", "contrast": "+1 SD", "category": "Need"},
+    {"feature": "pa_statewide_per_capita",
+     "label": "Damage per person", "contrast": "+1 SD", "category": "Need"},
+    {"feature": "state_party_match",
+     "label": "State shares president's party", "contrast": "0→1",
+     "category": "Political"},
+    {"feature": "governor_vs_president",
+     "label": "Governor's party vs. president's", "contrast": "+1 SD",
+     "category": "Political"},
+    {"feature": "dmg_weighted_mean_pres_margin",
+     "label": "How much worst-hit areas favored the president", "contrast": "+1 SD",
+     "category": "Political"},
+]
+
+# Category colours for fig6 (aligned with fig4's palette).
+_M1_LAY_CAT_COLOURS = {"Need": _ORANGE, "Political": _RED}
+# Greyed colour for factors whose plausible range crosses zero (no clear effect).
+_M1_LAY_UNCLEAR = "#9aa0a6"
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +207,77 @@ def _feature_category(name):
     if name in _POLITICAL_SET:
         return "Political / Partisan"
     return "Request / Jurisdiction / Other"
+
+
+def _logistic(x):
+    """Standard logistic (sigmoid) function.
+
+    Args:
+        x (float | np.ndarray): log-odds value(s).
+    Returns:
+        float | np.ndarray: probabilities in (0, 1).
+    """
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def _build_m1_lay_effects(vb_table):
+    """Translate the M1 odds-ratio table into lay probability-point effects.
+
+    For each selected factor, converts its odds ratio (per +1 SD for continuous
+    predictors, 0->1 for binary) into the change in predicted denial probability
+    at the model baseline:
+
+        effect = logistic(b0 + log(OR)) - logistic(b0)
+
+    where b0 is the fitted intercept log-odds (log of the table's Intercept-row
+    odds ratio). The plausible range uses the OR confidence bounds; a factor
+    whose range straddles zero is flagged ``unclear`` ("no clear effect").
+    Factors absent from the table are skipped with a printed warning.
+
+    Args:
+        vb_table (DataFrame): output of model1_logit.odds_ratio_table on the VB
+            fit; indexed by feature name with odds_ratio / ci_low / ci_high
+            columns and an 'Intercept' (or 'const') row.
+    Returns:
+        tuple(DataFrame, float): (effects_df, baseline_p). effects_df is indexed
+            by lay label with columns effect_pts, range_low_pts, range_high_pts,
+            unclear (bool), category, contrast. baseline_p is logistic(b0).
+    """
+    intercept_row = "Intercept" if "Intercept" in vb_table.index else "const"
+    if intercept_row not in vb_table.index:
+        raise ValueError(
+            "odds-ratio table has no Intercept/const row; cannot anchor baseline"
+        )
+    b0 = float(np.log(vb_table.loc[intercept_row, "odds_ratio"]))
+    baseline_p = float(_logistic(b0))
+
+    rows = []
+    labels = []
+    for spec in _M1_LAY_FACTORS:
+        feat = spec["feature"]
+        if feat not in vb_table.index:
+            print(f"  [fig6] skipping '{feat}': not in M1 odds-ratio table")
+            continue
+        beta = np.log(float(vb_table.loc[feat, "odds_ratio"]))
+        beta_lo = np.log(float(vb_table.loc[feat, "ci_low"]))
+        beta_hi = np.log(float(vb_table.loc[feat, "ci_high"]))
+        eff = (_logistic(b0 + beta) - baseline_p) * 100.0
+        lo = (_logistic(b0 + beta_lo) - baseline_p) * 100.0
+        hi = (_logistic(b0 + beta_hi) - baseline_p) * 100.0
+        if lo > hi:                      # defensive: keep range ordered
+            lo, hi = hi, lo
+        rows.append({
+            "effect_pts": eff,
+            "range_low_pts": lo,
+            "range_high_pts": hi,
+            "unclear": bool(lo < 0.0 < hi),
+            "category": spec["category"],
+            "contrast": spec["contrast"],
+        })
+        labels.append(spec["label"])
+
+    effects_df = pd.DataFrame(rows, index=labels)
+    return effects_df, baseline_p
 
 
 # ---------------------------------------------------------------------------
