@@ -661,6 +661,11 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
 
     fig, ax = plt.subplots(figsize=(10, max(4.5, n * 0.62 + 1.8)))
 
+    if n == 0:
+        print("  [fig6] no factors to plot; skipping fig6_lay_effects.png")
+        plt.close(fig)
+        return
+
     for y, (label, row) in zip(y_pos, df.iterrows()):
         colour = (_M1_LAY_UNCLEAR if row["unclear"]
                   else _M1_LAY_CAT_COLOURS[row["category"]])
@@ -724,10 +729,9 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
 
     fig.text(
         0.5, -0.02,
-        "Each bar is that factor's solo effect from the baseline (logistic link, "
-        "so effects don't simply add). Ranges are Model 1 variational-Bayes "
-        "credible intervals — indicative, narrower than a full posterior.",
-        ha="center", fontsize=7.5, color="#888", wrap=True,
+        "Each bar is that factor's solo effect from the baseline (logistic link, so effects don't simply add).\n"
+        "Ranges are Model 1 variational-Bayes credible intervals — indicative, narrower than a full posterior.",
+        ha="center", fontsize=7.5, color="#888",
     )
 
     fig.tight_layout()
@@ -742,7 +746,7 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
 # ---------------------------------------------------------------------------
 
 def main():
-    """Compute fresh model KPIs and render five PNG charts to docs/models/figures/.
+    """Compute fresh model KPIs and render six PNG charts to docs/models/figures/.
 
     Assembles the feature matrix once then calls each model's public API
     functions in the same order as scripts/run_all_models.py. Prints key

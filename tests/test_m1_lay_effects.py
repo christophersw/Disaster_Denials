@@ -145,3 +145,15 @@ def test_const_intercept_fallback():
     _, baseline_p = _build_m1_lay_effects(table)
     expected = _logistic(np.log(const_odds))
     assert baseline_p == pytest.approx(expected, abs=1e-6)
+
+
+def test_plot_fig6_empty_effects_does_not_crash(tmp_path):
+    """An empty effects frame is skipped without raising or writing a file."""
+    from scripts.plot_model_results import plot_fig6_lay_effects
+
+    empty = pd.DataFrame(
+        columns=["effect_pts", "range_low_pts", "range_high_pts",
+                 "unclear", "category", "contrast"]
+    )
+    plot_fig6_lay_effects(empty, 0.08, str(tmp_path))
+    assert not (tmp_path / "fig6_lay_effects.png").exists()
