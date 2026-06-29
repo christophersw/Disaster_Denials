@@ -704,22 +704,36 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
     ax.annotate("more likely denied ▶", xy=(span * 0.35, -1.0),
                 fontsize=9, color=_RED, annotation_clip=False, va="center")
 
-    # baseline callout
-    ax.text(0.99, 1.02,
+    # baseline callout — inside the top-left, clear of the title band above the
+    # axes and of the (empty) left side of the top rows
+    ax.text(0.015, 0.975,
             f"Baseline: about {round(baseline_p * 100)} in 100 requests denied",
-            transform=ax.transAxes, ha="right", va="bottom", fontsize=9,
+            transform=ax.transAxes, ha="left", va="top", fontsize=9,
             color="#444",
             bbox=dict(boxstyle="round,pad=0.3", fc="#f3f4f6", ec="#ccc"))
 
-    legend_handles = [
-        mpatches.Patch(facecolor=_M1_LAY_CAT_COLOURS["Need"],
-                       label="Need / severity"),
-        mpatches.Patch(facecolor=_M1_LAY_CAT_COLOURS["Political"],
-                       label="Political / partisan"),
-        mpatches.Patch(facecolor=_M1_LAY_UNCLEAR,
-                       label="No clear effect (range crosses zero)"),
-    ]
-    ax.legend(handles=legend_handles, fontsize=8.5, loc="lower right")
+    # Build the legend from the colours ACTUALLY drawn so it never promises a
+    # swatch with no member. A category gets its colour key only if at least one
+    # of its factors has a clear effect (unclear factors render grey regardless
+    # of category), and the grey key appears only if some factor is unclear.
+    need_clear = bool(((df["category"] == "Need") & ~df["unclear"]).any())
+    pol_clear = bool(((df["category"] == "Political") & ~df["unclear"]).any())
+    any_unclear = bool(df["unclear"].any())
+    legend_handles = []
+    if need_clear:
+        legend_handles.append(mpatches.Patch(
+            facecolor=_M1_LAY_CAT_COLOURS["Need"], label="Need / severity"))
+    if pol_clear:
+        legend_handles.append(mpatches.Patch(
+            facecolor=_M1_LAY_CAT_COLOURS["Political"], label="Political / partisan"))
+    if any_unclear:
+        legend_handles.append(mpatches.Patch(
+            facecolor=_M1_LAY_UNCLEAR, label="No clear effect (range crosses zero)"))
+    # Legend outside the axes (right side), so it cannot cover the in-plot
+    # direction hints at the bottom.
+    if legend_handles:
+        ax.legend(handles=legend_handles, fontsize=8.5,
+                  loc="center left", bbox_to_anchor=(1.01, 0.5), frameon=True)
 
     # NOTE: this takeaway title encodes the CURRENT finding (political alignment
     # shows no clear effect); it is not recomputed from effects_df. Revisit it if
