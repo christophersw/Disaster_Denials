@@ -289,3 +289,65 @@ def plot_shap_waterfalls(explanation, cases, out_dir) -> None:
         fig.savefig(path, dpi=DPI, bbox_inches="tight")
         plt.close(fig)
     print(f"  Saved {path}")
+
+
+def main():
+    """Compute M2 diagnostics and render the five PNGs to docs/models/figures/.
+
+    Performance figures use out-of-fold predictions; SHAP figures use a
+    full-data fit. Prints each saved path. Takes ~1-2 minutes.
+
+    Args: none (reads --db from CLI, default data/pda.db).
+    Returns: None.
+    Side effects: creates/overwrites five PNGs in docs/models/figures/.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--db", default="data/pda.db",
+        help="Path to the SQLite database (default: data/pda.db)",
+    )
+    args = parser.parse_args()
+    os.makedirs(FIGURES_DIR, exist_ok=True)
+
+    print("Assembling feature matrix from:", args.db)
+    X, y, groups = assemble.assemble_features(args.db)
+    y_arr = np.asarray(y)
+    Xs2 = model2_gbm._slice(X, True)
+    print(f"  {len(Xs2)} rows x {Xs2.shape[1]} cols | "
+          f"denied={int(y_arr.sum())} ({100 * y_arr.mean():.1f}%)")
+
+    print("Out-of-fold predictions (grouped CV) ...")
+    # Filter to rows with a state grouping key — tribal nations / territories
+    # have no state_abbr; StratifiedGroupKFold cannot sort a mixed float-NaN /
+    # str groups array on numpy >= 2.x. Mirrors the filter in political_ablation.
+    valid_mask = groups.notna().values
+    Xs2_valid = Xs2.iloc[valid_mask]
+    y_valid = y_arr[valid_mask]
+    groups_valid = groups.values[valid_mask]
+    oof = evaluation.oof_predictions(
+        model2_gbm.build_estimator(), Xs2_valid, y_valid, groups_valid)
+    thr_info = f1_max_threshold(y_valid, oof)
+    print(f"  F1-max threshold={thr_info['threshold']:.3f} "
+          f"(P={thr_info['precision']:.2f} R={thr_info['recall']:.2f} "
+          f"F1={thr_info['f1']:.2f})")
+
+    plot_pr_curve(y_valid, oof, thr_info, FIGURES_DIR)
+    plot_confusion_matrices(y_valid, oof, thr_info, FIGURES_DIR)
+
+    print("Full-data fit + SHAP explanation ...")
+    est = model2_gbm.build_estimator()
+    est.fit(Xs2, y_arr)
+    explanation = model2_gbm.shap_explanation(est, Xs2)
+    plot_shap_beeswarm(explanation, FIGURES_DIR)
+    plot_shap_mean_bar(explanation, FIGURES_DIR)
+
+    full_proba = est.predict_proba(Xs2)[:, 1]
+    cases = select_waterfall_cases(y_arr, full_proba,
+                                   n_per_class=N_PER_CLASS, seed=SEED)
+    plot_shap_waterfalls(explanation, cases, FIGURES_DIR)
+
+    print(f"All 5 diagnostic charts saved to {FIGURES_DIR}/")
+
+
+if __name__ == "__main__":
+    main()
