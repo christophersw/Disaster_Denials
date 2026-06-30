@@ -20,6 +20,12 @@ Description:
 
 Changelog:
     2026-06-29  Initial version.
+    2026-06-30  Rename all chart titles "Model 2" → "GBT — State Data Only"
+                (PR curve, confusion matrices, beeswarm, mean-|SHAP| bar,
+                waterfalls).
+    2026-06-30  Beeswarm: add a dot-colour legend (high / low / missing-NaN),
+                a caption explaining the grey (NaN) dots, and an x-axis label
+                naming the denial direction (positive SHAP ⇒ more likely denied).
 """
 
 import argparse
@@ -29,6 +35,7 @@ import tempfile
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 import numpy as np
 from sklearn.metrics import (
     average_precision_score,
@@ -55,6 +62,11 @@ SEED = 0
 # Palette (shared with plot_model_results.py).
 _BLUE = "#2E86AB"
 _RED = "#C0392B"
+# SHAP beeswarm dot colours: the red_blue colormap endpoints (high/low feature
+# value) and the grey SHAP renders for a missing (NaN) feature value.
+_SHAP_HIGH = "#ff0d57"
+_SHAP_LOW = "#1e88e5"
+_GREY_NAN = "#777777"
 
 
 def f1_max_threshold(y, proba):
@@ -145,7 +157,7 @@ def plot_pr_curve(y, proba, thr_info, out_dir):
     ax.set_ylabel("Precision", fontsize=11)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1.02)
-    ax.set_title("Model 2 — precision–recall (out-of-fold)",
+    ax.set_title("GBT — State Data Only: precision–recall (out-of-fold)",
                  fontsize=12, fontweight="bold")
     ax.legend(loc="upper right", fontsize=9)
     ax.grid(alpha=0.3)
@@ -196,7 +208,7 @@ def plot_confusion_matrices(y, proba, thr_info, out_dir):
         ax.set_title(f"{title}\nprecision = {prec:.2f}   recall = {rec:.2f}   "
                      f"F1 = {f1:.2f}", fontsize=10)
 
-    fig.suptitle("Model 2 — confusion matrices (out-of-fold)",
+    fig.suptitle("GBT — State Data Only: confusion matrices (out-of-fold)",
                  fontsize=13, fontweight="bold")
     fig.tight_layout()
     path = os.path.join(out_dir, "m2_confusion_matrices.png")
@@ -208,6 +220,16 @@ def plot_confusion_matrices(y, proba, thr_info, out_dir):
 def plot_shap_beeswarm(explanation, out_dir) -> None:
     """SHAP beeswarm summary (top-TOP_N features) for the full-data fit.
 
+    Each dot is one report; its x-position is that feature's SHAP value — the
+    impact on the model output, which here is the predicted log-odds of DENIAL
+    (the explanation is built from the positive class, denied=1), so a positive
+    SHAP value pushes a report toward denial. SHAP colours each dot by the
+    feature value (red = high, blue = low — also shown on the colour bar); a row
+    whose feature is MISSING (NaN) has no value to map and renders grey. Missing
+    values are common because the GBT routes them natively, so a discrete dot-
+    colour legend (high / low / missing) and a caption are added and the x-axis
+    is relabelled to name the denial direction — SHAP's defaults explain neither.
+
     Args:
         explanation: a shap.Explanation from model2_gbm.shap_explanation.
         out_dir: directory for the PNG.
@@ -218,7 +240,35 @@ def plot_shap_beeswarm(explanation, out_dir) -> None:
 
     shap.plots.beeswarm(explanation, max_display=TOP_N, show=False)
     fig = plt.gcf()
-    fig.suptitle("Model 2 — SHAP summary (beeswarm)", fontsize=12, fontweight="bold")
+    ax = fig.axes[0]   # the swarm axes (fig.axes[1] is SHAP's colour bar)
+    fig.suptitle("GBT — State Data Only: SHAP summary (beeswarm)",
+                 fontsize=12, fontweight="bold")
+
+    # Name the model output and its direction: the explanation is the positive
+    # (denied) class, so positive SHAP ⇒ more likely denied.
+    ax.set_xlabel("SHAP value — impact on log-odds of DENIAL "
+                  "(positive ⇒ more likely denied)", fontsize=9)
+
+    # Discrete legend for the dot colours. SHAP's colour bar shows the red→blue
+    # gradient (high→low feature value) but never the grey, which marks a missing
+    # (NaN) value. Placed below the axes so it never covers dots.
+    def _dot(color, label):
+        return mlines.Line2D([], [], marker="o", linestyle="none", color=color,
+                             markersize=7, label=label)
+    ax.legend(
+        handles=[_dot(_SHAP_HIGH, "high feature value"),
+                 _dot(_SHAP_LOW, "low feature value"),
+                 _dot(_GREY_NAN, "missing value (NaN)")],
+        loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=3,
+        fontsize=8.5, frameon=True, framealpha=0.9,
+    )
+    ax.annotate(
+        "Grey = the feature is missing (NaN) for that report — common because "
+        "the GBT routes missing values natively, not a data error.",
+        xy=(0.5, -0.24), xycoords="axes fraction", ha="center", va="top",
+        fontsize=8, color="#666",
+    )
+
     path = os.path.join(out_dir, "m2_shap_beeswarm.png")
     fig.savefig(path, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
@@ -238,7 +288,8 @@ def plot_shap_mean_bar(explanation, out_dir) -> None:
 
     shap.plots.bar(explanation, max_display=TOP_N, show=False)
     fig = plt.gcf()
-    fig.suptitle("Model 2 — mean |SHAP| importance", fontsize=12, fontweight="bold")
+    fig.suptitle("GBT — State Data Only: mean |SHAP| importance",
+                 fontsize=12, fontweight="bold")
     path = os.path.join(out_dir, "m2_shap_mean_bar.png")
     fig.savefig(path, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
@@ -284,7 +335,7 @@ def plot_shap_waterfalls(explanation, cases, out_dir) -> None:
             ax.axis("off")
         for ax in flat[len(panels):]:
             ax.axis("off")
-        fig.suptitle("Model 2 — SHAP waterfalls (individual cases)",
+        fig.suptitle("GBT — State Data Only: SHAP waterfalls (individual cases)",
                      fontsize=14, fontweight="bold")
         fig.tight_layout()
         path = os.path.join(out_dir, "m2_shap_waterfalls.png")

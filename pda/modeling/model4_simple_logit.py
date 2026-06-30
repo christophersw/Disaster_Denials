@@ -386,6 +386,74 @@ def odds_ratio_table(result):
     return table.loc[order]
 
 
+def _cv_design(frame, groups):
+    """Extract the (design, target, group key) Model 4's grouped-CV passes share.
+
+    Shared by cv_fit_quality and cv_oof_predictions so both score the identical
+    rows, columns, and grouping: rows lacking a state grouping key are dropped (as
+    in Models 2/3), while the odds-ratio table itself uses the full design.
+
+    Args:
+        frame: output of prepare_simple_logit_frame.
+        groups: state_abbr Series aligned to the frame's index.
+    Returns:
+        tuple(DataFrame, np.ndarray, np.ndarray): (design, target, group_key) for
+        the kept rows, with the design's index reset to 0..k-1.
+    """
+    predictors = _predictor_columns(frame)
+    design = frame[predictors].astype(float)
+    target = frame["denied"].astype(int).to_numpy()
+    grp = pd.Series(groups).reindex(frame.index)
+    keep = grp.notna().to_numpy()
+    return (
+        design.loc[keep].reset_index(drop=True),
+        target[keep],
+        grp[keep].to_numpy(),
+    )
+
+
+def _cv_estimator():
+    """Return the mild-L2 LogisticRegression used for every Model 4 CV pass.
+
+    A single factory so cv_fit_quality and cv_oof_predictions use byte-identical
+    estimator settings (the curves' AUCs must match the reported summary metrics).
+    The mild default penalty keeps each held-out refit stable even on a near-
+    separated fold; it is used ONLY to measure discrimination and never feeds the
+    reported coefficients.
+
+    Returns:
+        An unfitted sklearn LogisticRegression.
+    """
+    from sklearn.linear_model import LogisticRegression
+
+    return LogisticRegression(max_iter=1000, random_state=0)
+
+
+def cv_oof_predictions(frame, groups, n_splits=5):
+    """Pooled grouped out-of-fold P(denied) and aligned labels for Model 4.
+
+    Uses the same design, grouping, estimator, and StratifiedGroupKFold harness as
+    cv_fit_quality, but returns the raw out-of-fold probabilities and their labels
+    so callers can draw ROC / precision-recall curves whose AUCs reproduce the
+    reported metrics. Rows lacking a state grouping key are dropped (see _cv_design).
+
+    Args:
+        frame: output of prepare_simple_logit_frame.
+        groups: state_abbr Series aligned to the frame's index.
+        n_splits: number of CV folds.
+    Returns:
+        tuple(np.ndarray, np.ndarray): (y_true, y_proba) — the int 0/1 labels and
+        their pooled held-out P(denied), aligned and of equal length.
+    """
+    from pda.modeling import evaluation
+
+    design, target, grp = _cv_design(frame, groups)
+    proba = evaluation.oof_predictions(
+        _cv_estimator(), design, target, grp, n_splits=n_splits
+    )
+    return target, proba
+
+
 def cv_fit_quality(frame, groups, n_splits=5):
     """Grouped-CV discrimination for the Model 4 design (a fit-quality check).
 
@@ -404,21 +472,9 @@ def cv_fit_quality(frame, groups, n_splits=5):
     Returns:
         dict with float 'roc_auc', 'pr_auc', and 'brier'.
     """
-    from sklearn.linear_model import LogisticRegression
-
     from pda.modeling import evaluation
 
-    predictors = _predictor_columns(frame)
-    design = frame[predictors].astype(float)
-    target = frame["denied"].astype(int).to_numpy()
-    grp = pd.Series(groups).reindex(frame.index)
-    keep = grp.notna().to_numpy()
-
-    estimator = LogisticRegression(max_iter=1000, random_state=0)
+    design, target, grp = _cv_design(frame, groups)
     return evaluation.cv_scores(
-        estimator,
-        design.loc[keep].reset_index(drop=True),
-        target[keep],
-        grp[keep].to_numpy(),
-        n_splits=n_splits,
+        _cv_estimator(), design, target, grp, n_splits=n_splits
     )

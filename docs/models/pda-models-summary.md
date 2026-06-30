@@ -287,6 +287,41 @@ OR ≈ 1.06 (p = 0.67).
 
 ![Model 4 odds-ratio forest plot](figures/fig7_m4_forest.png)
 
+**Reading Figure 7 — the odds-ratio forest plot.** Each row is one retained predictor; the dot marks
+its odds ratio and the horizontal band its 95% confidence interval, drawn on a log scale with the
+vertical line at OR = 1 (no effect). Rows are ordered from the most approval-leaning predictor at the
+top to the most denial-leaning at the bottom, and the arrows beneath the axis make the direction
+explicit: an odds ratio below 1 pushes a request toward *approval*, above 1 toward *denial*. A filled
+marker — paired with a bold p-value in the right-hand column — flags significance at p < 0.05; an open
+marker (greyed p-value) does not. Political features are highlighted in blue, and the three
+median-imputation "missing" indicators are omitted from the plot to keep the substantive predictors
+legible (they remain in the fitted design). The chart makes the story visual: every significant effect
+sits at an extreme and concerns *request type, disaster size, per-capita impact, or jurisdiction* — an
+IA-only request is the lone strong denial driver (OR ≈ **19**), while larger total cost (OR ≈ **0.14**),
+higher per-capita PA impact (OR ≈ **0.40**), and territory status (OR ≈ **0.11**) are the strongest
+approval-leaners. The two political features — `governor_vs_president` (OR ≈ 1.15) and
+`share_affected_counties_pres_won` (OR ≈ 0.82) — sit right against the OR = 1 line with open markers,
+i.e., statistically indistinguishable from no effect.
+
+![Model 4 out-of-fold discrimination — ROC and F1 vs. threshold](figures/fig8_m4_curves.png)
+
+**Reading Figure 8 — out-of-fold discrimination.** These two panels ask how well Model 4 actually
+*separates* denials from approvals, scored on pooled out-of-fold predictions from state-grouped
+cross-validation (a state never appears in both the training and test folds, so the numbers reflect
+genuine generalization rather than memorized state quirks). The **left panel is the ROC curve** —
+true-positive rate against false-positive rate across every threshold; it bows sharply toward the
+top-left, well above the diagonal "chance" line, and the area beneath it (**ROC-AUC = 0.898**) means
+the model ranks a random denial above a random approval about 90% of the time. The **right panel speaks
+directly to the class-imbalance worry**: ROC-AUC is notoriously insensitive to imbalance and can look
+flattering when positives are rare, so we add the **F1 score** (the harmonic mean of precision and
+recall on the *denied* class) as a function of the decision threshold. F1 depends on where the cutoff is
+drawn — the default 0.50 gives **F1 = 0.577**, but the curve peaks at **F1 = 0.634 at a threshold of
+0.29**, the tell-tale sign that under an ~8% positive rate the natural operating point sits below 0.50.
+As an imbalance-robust single summary, the caption also carries **PR-AUC = 0.630** against a no-skill
+baseline of just **0.076** — roughly eight times better than chance. Taken together, the panels confirm
+that the ranked odds ratios in Figure 7 rest on a model with real, cross-validated discriminating power,
+not an artifact of the lopsided class sizes.
+
 ---
 
 ## Cross-model conclusion

@@ -227,3 +227,28 @@ def test_fit_and_cv_real_db():
     assert 0.0 <= scores["roc_auc"] <= 1.0
     assert 0.0 <= scores["pr_auc"] <= 1.0
     assert np.isfinite(scores["brier"])
+
+
+@pytest.mark.skipif(not os.path.exists("data/pda.db"), reason="needs data/pda.db")
+def test_cv_oof_predictions_align_and_match_scores():
+    """oof predictions align to kept labels and reproduce the reported ROC/PR-AUC.
+
+    cv_oof_predictions must score the identical rows/folds/estimator as
+    cv_fit_quality, so re-deriving the AUCs from its raw output must match the
+    cv_fit_quality summary exactly — this is what lets fig8's annotated curves
+    agree with the headline metrics.
+    """
+    from sklearn.metrics import average_precision_score, roc_auc_score
+
+    from pda.modeling import assemble
+    X, y, groups = assemble.assemble_features("data/pda.db")
+    frame = model4_simple_logit.prepare_simple_logit_frame(X, y)
+
+    y_true, proba = model4_simple_logit.cv_oof_predictions(frame, groups)
+    assert len(y_true) == len(proba)
+    assert np.isfinite(proba).all()
+    assert set(np.unique(y_true)).issubset({0, 1})
+
+    scores = model4_simple_logit.cv_fit_quality(frame, groups)
+    assert np.isclose(roc_auc_score(y_true, proba), scores["roc_auc"])
+    assert np.isclose(average_precision_score(y_true, proba), scores["pr_auc"])

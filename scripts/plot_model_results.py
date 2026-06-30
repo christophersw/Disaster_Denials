@@ -3,7 +3,7 @@
 Title: scripts/plot_model_results.py — Chart generation for PDA model KPIs and outcomes.
 Description:
     Computes fresh KPIs for the PDA decision models by calling their
-    public API functions, then renders seven publication-ready PNG charts to
+    public API functions, then renders nine publication-ready PNG charts to
     docs/models/figures/. Mirrors the computation pattern in
     scripts/run_all_models.py.
 
@@ -21,8 +21,14 @@ Description:
                                       need factors as probability-point effects
                                       on the denial rate (estimate + range).
         fig7_m4_forest.png          — forest plot: Model 4 odds ratios ordered
-                                      approval → denial, with per-row p-values and
-                                      direction arrows.
+                                      approval → denial, with per-row p-values,
+                                      a 95% CI key/caption, and direction arrows.
+        fig8_m4_curves.png          — Model 4 out-of-fold ROC curve and F1-vs-
+                                      threshold curve (state-grouped CV); PR-AUC and
+                                      prevalence baseline reported in the caption.
+        fig9_m2_pr_auc.png          — standalone GBT (State Data Only) PR-AUC:
+                                      full vs no-political bars with Δ ± 95% CI and
+                                      the no-skill prevalence baseline.
 
     Run:
         .venv/bin/python -m scripts.plot_model_results [--db data/pda.db]
@@ -35,6 +41,13 @@ Changelog:
     2026-06-29  Add fig6 lay-reader effects helper + chart.
     2026-06-30  fig7: order approval → denial, label rows with p-values + add
                 direction arrows, drop the "__missing" indicator rows.
+    2026-06-30  fig7: drop "simple logit" from the title; add a 95% CI legend key
+                and caption clarifying what each band is.
+    2026-06-30  Add fig8: Model 4 out-of-fold ROC + F1-vs-threshold curves
+                (PR-AUC reported in the caption).
+    2026-06-30  Rename Model 2 → "GBT — State Data Only" and Model 3 →
+                "GBT — State + County Data" in figure titles/labels (fig1, fig2,
+                fig4, fig5). Add fig9: standalone GBT state-data PR-AUC ablation.
 """
 
 import argparse
@@ -47,7 +60,7 @@ import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 from pda.modeling import (
     assemble, evaluation, model1_logit, model2_gbm, model3_county,
@@ -317,7 +330,7 @@ def plot_fig1(abl2, abl3, m3_roc_auc, out_dir):
     """
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    labels = ["Model 2\n(state features)", "Model 3\n(+ county composition)"]
+    labels = ["GBT\n(State Data Only)", "GBT\n(State + County Data)"]
     roc_vals = [abl2["full_roc_auc"], m3_roc_auc]
     pr_vals  = [abl2["full_pr_auc"],  abl3["m3_pr_auc"]]
     x = np.arange(len(labels))
@@ -403,7 +416,8 @@ def plot_fig2(abl2, abl3, out_dir):
     )
     ax.set_ylim(0, min(1.0, max(vals) + 0.12))
     ax.set_ylabel("PR-AUC (out-of-fold)", fontsize=11)
-    ax.set_title("Model 2: full vs no-political PR-AUC", fontsize=11, fontweight="bold")
+    ax.set_title("GBT — State Data Only: full vs no-political PR-AUC",
+                 fontsize=11, fontweight="bold")
     ax.grid(axis="y", alpha=0.3)
 
     # ---- Panel (b): Delta-with-CI for M2 and M3 -----------------------------
@@ -588,14 +602,15 @@ def plot_fig4(imp_df, out_dir):
     ax.legend(handles=legend_handles, fontsize=9, loc="lower right")
     ax.set_xlabel("Mean |SHAP value|", fontsize=10)
     ax.set_title(
-        "Model 2 — need & severity dominate; political features rank low",
+        "GBT — State Data Only\n"
+        "need & severity dominate; political features rank low",
         fontsize=12, fontweight="bold",
     )
     ax.grid(axis="x", alpha=0.3)
 
     fig.tight_layout()
     path = os.path.join(out_dir, "fig4_feature_importance.png")
-    fig.savefig(path, dpi=DPI)
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved {path}")
 
@@ -634,7 +649,8 @@ def plot_fig5(comp, out_dir):
 
     ax.set_xlabel("Feature importance (mean |SHAP|)", fontsize=10)
     ax.set_title(
-        "Model 3 — 'one strong county' > 'most counties' (but weak overall)",
+        "GBT — State + County Data\n"
+        "'one strong county' > 'most counties' (but weak overall)",
         fontsize=12, fontweight="bold",
     )
     ax.grid(axis="x", alpha=0.3)
@@ -642,7 +658,7 @@ def plot_fig5(comp, out_dir):
 
     fig.tight_layout()
     path = os.path.join(out_dir, "fig5_stronghold.png")
-    fig.savefig(path, dpi=DPI)
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved {path}")
 
@@ -851,7 +867,8 @@ def plot_fig7_m4_forest(table, out_dir):
     ax.set_ylim(-1.4, n - 0.3)   # headroom below row 0 for the direction arrows
     ax.set_xlabel("Odds Ratio (log scale)", fontsize=10)
     ax.set_title(
-        "Model 4 — what drives a PDA denial (simple logit, ordered approval → denial)",
+        "Logistic Regression Model — what drives a PDA denial "
+        "(ordered approval → denial)",
         fontsize=11, fontweight="bold",
     )
 
@@ -873,6 +890,11 @@ def plot_fig7_m4_forest(table, out_dir):
         fontsize=9, fontweight="bold", color=_DIR_DENY,
     )
 
+    # Geometry key: what the dot and the band mean for every feature row.
+    ci_handle = mlines.Line2D(
+        [], [], color="#444", marker="o", linewidth=1.6, markersize=7,
+        label="Odds ratio (dot) · 95% CI (band)",
+    )
     political_handle = mlines.Line2D(
         [], [], color=_BLUE, marker="o", linewidth=1.4, markersize=7,
         label="Political feature",
@@ -891,10 +913,21 @@ def plot_fig7_m4_forest(table, out_dir):
         label="Not significant (p ≥ 0.05)",
     )
     ax.legend(
-        handles=[political_handle, other_handle, sig_handle, nonsig_handle],
+        handles=[ci_handle, political_handle, other_handle,
+                 sig_handle, nonsig_handle],
         fontsize=8, loc="upper right", framealpha=0.9,
     )
     ax.grid(axis="x", alpha=0.25)
+
+    # Caption spelling out the band for every feature and the OR = 1 nuance.
+    fig.text(
+        0.5, -0.03,
+        "For each feature: the dot is the odds ratio and the horizontal band is its "
+        "95% Wald confidence interval.\n"
+        "A band that crosses the OR = 1 line (no effect) is not statistically "
+        "distinguishable from no effect.",
+        ha="center", fontsize=8, color="#666",
+    )
 
     fig.tight_layout()
     path = os.path.join(out_dir, "fig7_m4_forest.png")
@@ -903,8 +936,172 @@ def plot_fig7_m4_forest(table, out_dir):
     print(f"  Saved {path}")
 
 
+def plot_fig8_m4_curves(y_true, y_proba, out_dir):
+    """Two-panel discrimination chart for Model 4: ROC curve and F1-vs-threshold.
+
+    Drawn from pooled grouped out-of-fold predictions (state-grouped CV), so it
+    reflects held-out performance rather than in-sample fit. Left panel: ROC curve
+    with the chance diagonal and ROC-AUC annotated. Right panel: F1 as a function
+    of the decision threshold, marking the best achievable F1 (and its threshold)
+    and the F1 at the default 0.50 cutoff — the imbalance-honest view, since F1 is
+    precision/recall-based (unlike ROC-AUC) and the default threshold is usually
+    suboptimal under a rare outcome. PR-AUC (average precision) and the no-skill
+    prevalence baseline are reported in the caption. ROC-AUC, PR-AUC, and F1 are
+    computed with the same metrics/folds as cv_fit_quality, so they match the
+    reported numbers.
+
+    Args:
+        y_true (array): int 0/1 denial labels for the out-of-fold rows.
+        y_proba (array): held-out P(denied) aligned to y_true.
+        out_dir (str): directory for saving the PNG.
+    Returns:
+        None. Saves fig8_m4_curves.png to out_dir.
+    """
+    from sklearn.metrics import (
+        average_precision_score, f1_score, precision_recall_curve, roc_curve,
+    )
+
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
+    finite = np.isfinite(y_proba)            # defensive: drop any uncovered row
+    y_true, y_proba = y_true[finite], y_proba[finite]
+    prevalence = float(y_true.mean())
+
+    fpr, tpr, _ = roc_curve(y_true, y_proba)
+    roc_auc = roc_auc_score(y_true, y_proba)
+    pr_auc = average_precision_score(y_true, y_proba)
+
+    # F1 at every threshold breakpoint. precision_recall_curve drops the final
+    # prec/rec pair (it has no threshold); guard the 0/0 where prec+rec == 0.
+    precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
+    prec_t, rec_t = precision[:-1], recall[:-1]
+    f1_curve = np.divide(
+        2 * prec_t * rec_t, prec_t + rec_t,
+        out=np.zeros_like(prec_t), where=(prec_t + rec_t) > 0,
+    )
+    best = int(f1_curve.argmax())
+    f1_best, thr_best = float(f1_curve[best]), float(thresholds[best])
+    f1_half = float(f1_score(y_true, (y_proba >= 0.5).astype(int)))
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # ---- Panel (a): ROC curve ----------------------------------------------
+    ax = axes[0]
+    ax.plot(fpr, tpr, color=_BLUE, linewidth=2.3, zorder=4,
+            label=f"Logistic Regression (ROC-AUC = {roc_auc:.3f})")
+    ax.plot([0, 1], [0, 1], color="gray", linestyle="--", linewidth=1.3,
+            zorder=2, label="Chance (0.500)")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.02)
+    ax.set_xlabel("False positive rate", fontsize=10)
+    ax.set_ylabel("True positive rate (recall)", fontsize=10)
+    ax.set_title("ROC curve", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9, loc="lower right")
+    ax.grid(alpha=0.3)
+
+    # ---- Panel (b): F1 vs decision threshold -------------------------------
+    ax = axes[1]
+    ax.plot(thresholds, f1_curve, color=_ORANGE, linewidth=2.3, zorder=4,
+            label="F1 vs threshold")
+    ax.axvline(0.5, color="gray", linestyle=":", linewidth=1.1, zorder=2)
+    ax.plot([thr_best], [f1_best], "o", color=_RED, markersize=9, zorder=6,
+            label=f"Best F1 = {f1_best:.3f} @ t = {thr_best:.2f}")
+    ax.plot([0.5], [f1_half], "s", color="#444", markersize=8, zorder=6,
+            label=f"F1 @ default t = 0.50: {f1_half:.3f}")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.02)
+    ax.set_xlabel("Decision threshold  (classify denied if P ≥ t)", fontsize=10)
+    ax.set_ylabel("F1 score (denied class)", fontsize=10)
+    ax.set_title("F1 vs decision threshold", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9, loc="upper right")
+    ax.grid(alpha=0.3)
+
+    fig.suptitle(
+        "Logistic Regression Model — out-of-fold discrimination (state-grouped CV)",
+        fontsize=13, fontweight="bold", y=1.02,
+    )
+    fig.text(
+        0.5, -0.02,
+        f"PR-AUC (average precision) = {pr_auc:.3f}  vs.  {prevalence:.3f} no-skill "
+        f"baseline (prevalence).\n"
+        f"F1 is precision/recall-based, so — unlike ROC-AUC — it reflects the "
+        f"{prevalence:.0%} class imbalance; the default t = 0.50 is usually "
+        f"suboptimal under imbalance.",
+        ha="center", fontsize=8, color="#666",
+    )
+    fig.tight_layout()
+    path = os.path.join(out_dir, "fig8_m4_curves.png")
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
+def plot_fig9_m2_pr_auc(abl2, prevalence, out_dir):
+    """Standalone bar chart: GBT (State Data Only) PR-AUC, full vs no-political.
+
+    Isolates the GBT state-data political ablation — previously shown only beside
+    the county model in fig2 — into a single panel: two out-of-fold PR-AUC bars
+    (the full model with the state political block, and the reduced model with
+    that block removed), annotated with the Δ and its bootstrap 95% CI. A dashed
+    no-skill baseline at the class prevalence anchors how far both bars sit above
+    chance, so the takeaway reads off the chart: the model predicts denial well,
+    yet the two bars are indistinguishable — state political features add ~no
+    predictive lift.
+
+    Args:
+        abl2 (dict): output of model2_gbm.political_ablation; keys
+            full_pr_auc, reduced_pr_auc, delta, delta_ci.
+        prevalence (float): denial rate on the ablation's valid (non-null-group)
+            rows, drawn as the no-skill PR-AUC baseline.
+        out_dir (str): directory for saving the PNG.
+    Returns:
+        None. Saves fig9_m2_pr_auc.png to out_dir.
+    """
+    full, reduced = abl2["full_pr_auc"], abl2["reduced_pr_auc"]
+    delta = abl2["delta"]
+    lo, hi = abl2["delta_ci"]
+
+    fig, ax = plt.subplots(figsize=(7, 5.5))
+    labels = ["Full model\n(+ state political)", "No political\nfeatures"]
+    vals = [full, reduced]
+    bars = ax.bar(labels, vals, color=[_BLUE, _ORANGE], alpha=0.9,
+                  width=0.5, zorder=3)
+    for bar in bars:
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.008,
+                f"{bar.get_height():.3f}", ha="center", va="bottom",
+                fontsize=12, fontweight="bold")
+
+    # No-skill baseline: both bars tower over chance yet match each other — that
+    # contrast is the finding, not the (near-identical) bar heights themselves.
+    ax.axhline(prevalence, color="gray", linestyle="--", linewidth=1.3, zorder=2)
+    ax.text(1.45, prevalence + 0.006, f"no-skill baseline ({prevalence:.0%})",
+            ha="right", va="bottom", fontsize=8.5, color="gray")
+
+    ax.annotate(
+        f"Adding state political features:\nΔ PR-AUC = {delta:+.3f}   "
+        f"95% CI [{lo:.3f}, {hi:.3f}]\n(interval straddles 0 — no reliable lift)",
+        xy=(0.5, max(vals) + 0.05), xycoords=("axes fraction", "data"),
+        ha="center", fontsize=9.5, color="dimgray",
+        bbox=dict(boxstyle="round,pad=0.4", fc="lightyellow", ec="gray", alpha=0.9),
+    )
+
+    ax.set_ylim(0, max(vals) + 0.18)
+    ax.set_ylabel("PR-AUC (out-of-fold, state-grouped CV)", fontsize=11)
+    ax.set_title(
+        "GBT — State Data Only: political features add ~no predictive lift",
+        fontsize=12.5, fontweight="bold", pad=12,
+    )
+    ax.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "fig9_m2_pr_auc.png")
+    fig.savefig(path, dpi=DPI)
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
 def main():
-    """Compute fresh model KPIs and render seven PNG charts to docs/models/figures/.
+    """Compute fresh model KPIs and render nine PNG charts to docs/models/figures/.
 
     Assembles the feature matrix once then calls each model's public API
     functions in the same order as scripts/run_all_models.py. Prints key
@@ -913,7 +1110,7 @@ def main():
 
     Args: none (reads --db from CLI, default data/pda.db).
     Returns: None.
-    Side effects: creates/overwrites seven PNGs in docs/models/figures/.
+    Side effects: creates/overwrites nine PNGs in docs/models/figures/.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -958,6 +1155,10 @@ def main():
     print("\nModel 2: political ablation (CV ~30 s) ...")
     abl2 = model2_gbm.political_ablation(X, y, groups)
     lo2, hi2 = abl2["delta_ci"]
+    # Denial rate on the ablation's valid (non-null-group) rows — the no-skill
+    # PR-AUC baseline drawn in fig9 (matches political_ablation's row filter).
+    m2_groups = groups if isinstance(groups, pd.Series) else pd.Series(groups)
+    m2_prevalence = float(y_arr[m2_groups.notna().values].mean())
     print(f"  full   PR-AUC={abl2['full_pr_auc']:.3f}  "
           f"ROC-AUC={abl2['full_roc_auc']:.3f}")
     print(f"  reduced PR-AUC={abl2['reduced_pr_auc']:.3f}")
@@ -1002,6 +1203,12 @@ def main():
     print(f"  pseudo-R^2={m4_result.pseudo_r2:.3f}  {len(m4_table)} features; "
           f"dropped (separation)={m4_result.dropped_features or 'none'}")
 
+    print("  Computing grouped-CV out-of-fold predictions (fig8) ...")
+    m4_y, m4_proba = model4_simple_logit.cv_oof_predictions(m4_frame, groups)
+    print(f"  ROC-AUC={roc_auc_score(m4_y, m4_proba):.3f}  "
+          f"PR-AUC={average_precision_score(m4_y, m4_proba):.3f}  "
+          f"(baseline prevalence={m4_y.mean():.3f})")
+
     # ---- Generate charts ---------------------------------------------------
     print("\nGenerating charts ...")
     plot_fig1(abl2, abl3, m3_roc_auc, FIGURES_DIR)
@@ -1011,8 +1218,10 @@ def main():
     plot_fig5(comp, FIGURES_DIR)
     plot_fig6_lay_effects(effects_df, baseline_p, FIGURES_DIR)
     plot_fig7_m4_forest(m4_table, FIGURES_DIR)
+    plot_fig8_m4_curves(m4_y, m4_proba, FIGURES_DIR)
+    plot_fig9_m2_pr_auc(abl2, m2_prevalence, FIGURES_DIR)
 
-    print(f"\nAll 7 charts saved to {FIGURES_DIR}/")
+    print(f"\nAll 9 charts saved to {FIGURES_DIR}/")
 
 
 if __name__ == "__main__":
