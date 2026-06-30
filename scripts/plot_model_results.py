@@ -44,7 +44,10 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-from pda.modeling import assemble, evaluation, model1_logit, model2_gbm, model3_county
+from pda.modeling import (
+    assemble, evaluation, model1_logit, model2_gbm, model3_county,
+    model4_simple_logit,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -759,8 +762,71 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
 # Main entry point
 # ---------------------------------------------------------------------------
 
+# Model 4 political features, highlighted in the fig7 forest plot.
+_M4_POLITICAL = {"governor_vs_president", "share_affected_counties_pres_won"}
+_M4_MUTED = "#888888"
+
+
+def plot_fig7_m4_forest(table, out_dir):
+    """Horizontal forest plot: Model 4 odds ratios, ranked by effect magnitude.
+
+    One row per retained feature, sorted by |standardized coefficient| (largest at
+    top). LOG x-axis, reference line at OR=1. Political features are drawn in the
+    accent colour; need/request/structural features are muted grey. CI whiskers are
+    clipped to a sane visible range so the log scale does not explode.
+
+    Args:
+        table (DataFrame): model4_simple_logit.odds_ratio_table output — indexed by
+            feature, with columns odds_ratio, ci_low, ci_high, p_value, std_coef.
+        out_dir (str): directory for saving the PNG.
+    Returns:
+        None. Saves fig7_m4_forest.png to out_dir.
+    """
+    ranked = table.reindex(table["std_coef"].abs().sort_values().index)
+    n = len(ranked)
+    y_pos = np.arange(n, dtype=float)
+
+    fig, ax = plt.subplots(figsize=(9, max(5, n * 0.45 + 1.8)))
+    for i, (feat, row) in enumerate(ranked.iterrows()):
+        color = _BLUE if feat in _M4_POLITICAL else _M4_MUTED
+        lo = max(row["ci_low"], 0.05)
+        hi = min(row["ci_high"], 20.0)
+        ax.plot(row["odds_ratio"], y_pos[i], "o", color=color, markersize=7, zorder=5)
+        ax.plot([lo, hi], [y_pos[i], y_pos[i]], color=color, linewidth=1.4, zorder=4)
+        ax.plot([lo, lo], [y_pos[i] - 0.08, y_pos[i] + 0.08], color=color, lw=1.2)
+        ax.plot([hi, hi], [y_pos[i] - 0.08, y_pos[i] + 0.08], color=color, lw=1.2)
+
+    ax.axvline(1.0, color="black", linewidth=1.5, linestyle="-", zorder=2)
+    ax.set_xscale("log")
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(ranked.index, fontsize=9)
+    ax.set_xlabel("Odds Ratio (log scale)", fontsize=10)
+    ax.set_title(
+        "Model 4 — what drives a PDA denial (simple logit, ranked by effect size)",
+        fontsize=11, fontweight="bold",
+    )
+
+    political_handle = mlines.Line2D(
+        [], [], color=_BLUE, marker="o", linewidth=1.4, markersize=7,
+        label="Political feature",
+    )
+    other_handle = mlines.Line2D(
+        [], [], color=_M4_MUTED, marker="o", linewidth=1.4, markersize=7,
+        label="Need / request / structural",
+    )
+    ax.legend(handles=[political_handle, other_handle], fontsize=8.5,
+              loc="lower right")
+    ax.grid(axis="x", alpha=0.25)
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "fig7_m4_forest.png")
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved {path}")
+
+
 def main():
-    """Compute fresh model KPIs and render six PNG charts to docs/models/figures/.
+    """Compute fresh model KPIs and render seven PNG charts to docs/models/figures/.
 
     Assembles the feature matrix once then calls each model's public API
     functions in the same order as scripts/run_all_models.py. Prints key
@@ -769,7 +835,7 @@ def main():
 
     Args: none (reads --db from CLI, default data/pda.db).
     Returns: None.
-    Side effects: creates/overwrites six PNGs in docs/models/figures/.
+    Side effects: creates/overwrites seven PNGs in docs/models/figures/.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -850,6 +916,14 @@ def main():
     print(f"  one_county_max_margin={comp['one_county_max_margin']:.4f}  "
           f"most_counties_share_won={comp['most_counties_share_won']:.4f}")
 
+    # ---- Model 4: simple single-level logit (full population) --------------
+    print("\nModel 4: simple logit (full population) ...")
+    m4_frame = model4_simple_logit.prepare_simple_logit_frame(X, y)
+    m4_result = model4_simple_logit.fit_simple_logit(m4_frame)
+    m4_table = model4_simple_logit.odds_ratio_table(m4_result)
+    print(f"  pseudo-R^2={m4_result.pseudo_r2:.3f}  {len(m4_table)} features; "
+          f"dropped (separation)={m4_result.dropped_features or 'none'}")
+
     # ---- Generate charts ---------------------------------------------------
     print("\nGenerating charts ...")
     plot_fig1(abl2, abl3, m3_roc_auc, FIGURES_DIR)
@@ -858,8 +932,9 @@ def main():
     plot_fig4(imp2, FIGURES_DIR)
     plot_fig5(comp, FIGURES_DIR)
     plot_fig6_lay_effects(effects_df, baseline_p, FIGURES_DIR)
+    plot_fig7_m4_forest(m4_table, FIGURES_DIR)
 
-    print(f"\nAll 6 charts saved to {FIGURES_DIR}/")
+    print(f"\nAll 7 charts saved to {FIGURES_DIR}/")
 
 
 if __name__ == "__main__":
