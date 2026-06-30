@@ -133,6 +133,79 @@ def test_clean_fit_drops_nothing_and_exp_consistent():
     assert row["ci_low"] < row["odds_ratio"] < row["ci_high"]
 
 
+def test_most_separating_predictor_l2_fallback_picks_aligned_feature():
+    """With result=None, the L2-ranker fallback selects the label-aligned feature.
+
+    Exercises the `result is None` branch of _most_separating_predictor (the lazy
+    sklearn import + coef ranking) that the zero-cell Stage-1 path never reaches.
+    """
+    rng = np.random.default_rng(0)
+    target = pd.Series([0] * 45 + [1] * 15)
+    frame = pd.DataFrame(
+        {
+            "denied": target,
+            "aligned": np.array([0.0] * 45 + [5.0] * 15),   # tracks the label
+            "noise": rng.normal(size=60),                    # unrelated
+        }
+    )
+    offender = model4_simple_logit._most_separating_predictor(
+        frame, ["aligned", "noise"], target, None
+    )
+    assert offender == "aligned"
+
+
+def test_most_separating_predictor_uses_largest_coef_from_fit():
+    """With a fitted result, the predictor with the largest |coef| is chosen.
+
+    Exercises the `result is not None` branch of _most_separating_predictor.
+    """
+    import statsmodels.api as sm
+
+    rng = np.random.default_rng(2)
+    n = 200
+    strong = rng.normal(size=n)
+    weak = rng.normal(size=n)
+    logits = -1.5 + 3.0 * strong + 0.05 * weak
+    target = pd.Series(
+        (rng.uniform(size=n) < 1.0 / (1.0 + np.exp(-logits))).astype(int)
+    )
+    frame = pd.DataFrame({"denied": target, "strong": strong, "weak": weak})
+    design = sm.add_constant(frame[["strong", "weak"]].astype(float),
+                             has_constant="add")
+    result = sm.Logit(target, design).fit(disp=False, maxiter=200)
+    offender = model4_simple_logit._most_separating_predictor(
+        frame, ["strong", "weak"], target, result
+    )
+    assert offender == "strong"
+
+
+def test_stage2_drops_continuous_separator():
+    """A continuous (non-binary) perfect separator is caught by Stage 2, not Stage 1.
+
+    sep_cont has non-overlapping value ranges by class (complete separation) but
+    many distinct float values, so the binary zero-cell detector skips it and the
+    MLE/threshold path (Stage 2) must drop it.
+    """
+    rng = np.random.default_rng(3)
+    n = 60
+    denied = np.array([0] * 45 + [1] * 15)
+    sep_cont = np.concatenate(
+        [rng.uniform(-1.0, -0.5, 45), rng.uniform(0.5, 1.0, 15)]
+    )
+    frame = pd.DataFrame(
+        {
+            "denied": denied,
+            "sep_cont": sep_cont,
+            "noise_feature": rng.normal(size=n),
+        }
+    )
+    result = model4_simple_logit.fit_simple_logit(frame)
+    assert "sep_cont" in result.dropped_features
+    table = model4_simple_logit.odds_ratio_table(result)
+    assert "sep_cont" not in table.index
+    assert np.isfinite(table[["odds_ratio", "ci_low", "ci_high"]].to_numpy()).all()
+
+
 @pytest.mark.skipif(not os.path.exists("data/pda.db"), reason="needs data/pda.db")
 def test_fit_and_cv_real_db():
     """End-to-end: fit on the real DB, emit a finite ranked table + CV metrics."""

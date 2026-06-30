@@ -285,7 +285,7 @@ def _most_separating_predictor(frame, predictors, target, result):
     from sklearn.linear_model import LogisticRegression
 
     design = frame[predictors].astype(float).to_numpy()
-    ranker = LogisticRegression(C=1.0, max_iter=1000)
+    ranker = LogisticRegression(C=1.0, max_iter=1000, random_state=0)
     ranker.fit(design, target.to_numpy())
     weights = pd.Series(np.abs(ranker.coef_[0]), index=predictors)
     return str(weights.idxmax())
@@ -368,6 +368,9 @@ def odds_ratio_table(result):
         'ci_low', 'ci_high', 'p_value', and 'std_coef' (the standardized
         coefficient), sorted by |std_coef| descending — the "which features matter
         most" order. Dropped features are NOT rows here; read result.dropped_features.
+        NOTE on scale: this table's 'ci_low'/'ci_high' are on the ODDS-RATIO scale
+        (the exponentiated SimpleLogitResult.ci_low/ci_high, which are stored on the
+        coefficient / log-odds scale). 'std_coef' is the raw coefficient.
     """
     table = pd.DataFrame(
         {
@@ -411,7 +414,7 @@ def cv_fit_quality(frame, groups, n_splits=5):
     grp = pd.Series(groups).reindex(frame.index)
     keep = grp.notna().to_numpy()
 
-    estimator = LogisticRegression(max_iter=1000)
+    estimator = LogisticRegression(max_iter=1000, random_state=0)
     return evaluation.cv_scores(
         estimator,
         design.loc[keep].reset_index(drop=True),
