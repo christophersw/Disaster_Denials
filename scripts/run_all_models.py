@@ -28,7 +28,9 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from pda.modeling import assemble, model1_logit, model2_gbm, model3_county
+from pda.modeling import (
+    assemble, model1_logit, model2_gbm, model3_county, model4_simple_logit,
+)
 from scripts import verify_political_coding
 
 # Political feature names highlighted in the Model 1 cross-check table.
@@ -212,6 +214,35 @@ def main():
           f"{comp['one_county_max_margin']:.4f}")
     print(f"  share_affected_counties_pres_won (most counties): "
           f"{comp['most_counties_share_won']:.4f}")
+
+    # -------------------------------------------------------------------------
+    # Model 4: simple single-level logit — full-population feature ranking
+    # -------------------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("### MODEL 4: simple logit (full-population feature ranking) ###")
+    print("=" * 70)
+    m4_frame = model4_simple_logit.prepare_simple_logit_frame(X, y)
+    m4_result = model4_simple_logit.fit_simple_logit(m4_frame)
+    m4_table = model4_simple_logit.odds_ratio_table(m4_result)
+    m4_scores = model4_simple_logit.cv_fit_quality(m4_frame, groups)
+    print(f"Fit on {len(m4_frame)} reports "
+          f"({int(m4_frame['denied'].sum())} denials) via plain MLE.")
+    if m4_result.dropped_features:
+        print(f"  Separation: dropped {m4_result.dropped_features} "
+              f"(complete zero-cells, unidentifiable).")
+    else:
+        print("  Separation: none — all curated features retained.")
+    print(f"  McFadden pseudo-R^2={m4_result.pseudo_r2:.3f}  "
+          f"ROC-AUC={m4_scores['roc_auc']:.3f}  PR-AUC={m4_scores['pr_auc']:.3f}")
+    m4_display = m4_table.copy()
+    m4_display.insert(
+        0, "pol",
+        ["*" if name in {"governor_vs_president",
+                         "share_affected_counties_pres_won"} else ""
+         for name in m4_display.index],
+    )
+    print("\n--- Odds ratios ranked by |std coef| (* = political) ---")
+    print(m4_display.round(3).to_string())
 
     print("\n" + "=" * 70)
     print("### ALL MODELS COMPLETE ###")

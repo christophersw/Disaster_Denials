@@ -1,10 +1,11 @@
 # PDA Decision Models — Summary
 
-**What this is:** a high-level summary of the three machine-learning models built on `data/pda.db` to
+**What this is:** a high-level summary of the machine-learning models built on `data/pda.db` to
 test whether FEMA Preliminary Damage Assessment (PDA) declaration decisions can be predicted — and, in
 particular, **how much political alignment with the sitting president influences the decision, net of
-disaster need and severity.** Each section explains what the model does, why it was chosen, and the
-pipeline that produces it. Charts of the key performance indicators and outcomes follow inline.
+disaster need and severity.** Three core models triangulate the question, and a simpler fourth (Model 4)
+gives a plain-language feature ranking. Each section explains what the model does, why it was chosen, and
+the pipeline that produces it. Charts of the key performance indicators and outcomes follow inline.
 
 Full design rationale: `docs/superpowers/specs/2026-06-28-pda-decision-prediction-models-design.md`.
 Reproduce everything with `scripts/run_all_models.py`; regenerate the charts with
@@ -20,10 +21,12 @@ Reproduce everything with `scripts/run_all_models.py`; regenerate the charts wit
 - **Target:** a binary, request-level decision — *Declared* vs. initial *Denied*. Only request-time
   information is used; every post-decision field (e.g. `disaster_number`, `denial_reason`) is excluded
   as leakage.
-- **Why three models:** they triangulate the same question from different angles and at different
+- **Why several models:** they triangulate the same question from different angles and at different
   levels of credibility — an interpretable **effect size** (Model 1), a flexible **predictive**
   test (Model 2), and a sharper **county-level** political test (Model 3). A finding that holds across
-  all three is far more defensible than any single model's result.
+  all three is far more defensible than any single model's result. **Model 4** adds a simpler,
+  single-level logit whose ranked odds ratios put every feature on one comparable scale — a
+  plain-language cross-check on what drives the decision.
 
 ### The headline finding
 
@@ -106,6 +109,32 @@ excluded from this estimand and handled separately.
    *underestimate* uncertainty, so its intervals look deceptively tight. A second, more conservative
    estimator is an honesty check on which "significant" effects actually survive — and here, almost none
    do.
+
+**Model 1 is really two models — the result comes from combining them.** Fitting a *hierarchical* logit
+*honestly* is hard, so Model 1 is reported through **two different estimators of the same design**, each
+strong exactly where the other is weak. Neither is trustworthy on its own; the credible answer is what
+they **agree** on.
+
+| | **(A) Hierarchical, variational** | **(B) Pooled, frequentist** |
+| --- | --- | --- |
+| **What it is** | The mixed-effects logit *with* random intercepts for state and year (`BinomialBayesMixedGLM.fit_vb`) | A single-level logit on the *same* predictors but **without** the state/year random intercepts (`sm.Logit`, Wald intervals) |
+| **Its strength** | **Right controls** — political effects are identified *within* state and *within* year (partial pooling), so "red states simply get different disasters" can't masquerade as a political effect | **Honest error bars** — frequentist Wald intervals that don't share the variational fit's overconfidence (with an L1-penalised fallback when the small, quasi-separated sample makes the plain MLE blow up) |
+| **Its weakness** | **Overconfident** — the fast variational fit underestimates uncertainty, so its credible intervals are anti-conservative (too narrow) and effects look more "significant" than they really are | **Cruder question** — dropping the hierarchy throws away the within-state/within-year controls, so it no longer cleanly separates politics from stable regional and era differences |
+
+The trade-off is **structural, not just speed**: (A) has the right controls but dishonest error bars;
+(B) has honest error bars but the wrong, confounded controls. The single estimator that would deliver
+*both* at once — a hierarchical model fit by **MCMC** — is far more expensive to fit and tune, and with
+only ~87 denials it would almost certainly *widen* the intervals further rather than rescue any
+political effect.
+
+**How they're combined into one honest read.** Take the **effect size** — the odds ratio, net of state
+and year — from **(A)**, the model with the proper controls. Then treat the **uncertainty as a
+consensus**: an effect is called credible only when **both** estimators place its interval clearly away
+from OR = 1. Where (A) alone says "significant" but (B) reopens the interval across 1, the effect is an
+artifact of (A)'s overconfidence, not a real finding. Because the two estimators **bracket** what the
+expensive gold-standard (MCMC) would likely report, their agreement is a stronger, more honest claim
+than either could make alone — and it is exactly what produces the "suggestive but not robust" verdict
+below.
 
 **Outcome.** The political odds ratios are *suggestive but not robust*. The variational-Bayes intervals
 look tight, but the conservative pooled cross-check widens them so that **almost every political
@@ -218,6 +247,48 @@ county**" outweighs "**most counties favored him**" by ~3× (`max_pres_margin_af
 
 ---
 
+## Model 4 — Simple single-level logistic regression *(the plain-language ranking)*
+
+**What it does.** A flat logistic regression — no hierarchy — over the full population
+(1,279 reports, all jurisdictions). It competes a curated ~12-feature set and reports a
+single ranked table of **odds ratios with 95% confidence intervals and p-values**,
+answering "which features matter most to the Declared-vs-Denied decision, and in which
+direction?"
+
+**Why it was built.** Model 1's state/year random intercepts are more machinery than this
+small sample (~102 denials) warrants, and "state" is not a stable *political* grouping —
+leadership changes with elections. Model 4 trades the hierarchy for transparency: every
+curated feature competes on one comparable, standardized scale. The cost — stated plainly —
+is that, without the within-state control, its political coefficients are **associations**,
+not Model 1's within-state contrasts.
+
+**How it is fit.** Plain maximum-likelihood logit (robust BFGS) on the natural class
+balance — **no class weighting**, so the odds ratios mean what they say. Continuous
+predictors are log/standardized (per-SD effects); binary flags and jurisdiction/request
+dummies are category contrasts. Separation is handled by **detect-and-drop**: a feature
+that *perfectly* separates denials (a complete zero-cell) is unidentifiable, so it is
+removed and reported rather than papered over. On this corpus exactly two features drop —
+`jurisdiction_type_federal_district` (DC: **0 denials in 8 reports**) and the lone
+`request_profile_neither` report (1 report, denied) — both genuinely unestimable, so no
+penalized estimator (Firth) is needed; it remains the documented upgrade if separation ever
+proves frequent.
+
+**Outcome.** The model fits well (McFadden pseudo-R² ≈ **0.47**, LLR p ≈ 10⁻⁶³;
+grouped-CV **ROC-AUC ≈ 0.90, PR-AUC ≈ 0.63**), and its ranking tells the **same story as
+Models 1–3**: the decision is dominated by **what was requested and how big the disaster
+was**, not by politics. The strongest signals are an IA-only request (OR ≈ **19**, 95% CI
+3.4–106, vs a PA-only request), larger total cost (OR ≈ **0.14**, 0.08–0.23 — bigger
+disasters are denied far less), a missing county-match flag (OR ≈ **5.5**, 2.6–11.6 — a
+jurisdiction-status/data proxy), and higher per-capita PA impact (OR ≈ **0.40**,
+0.24–0.66). The **political features rank at the bottom and none is significant**:
+`share_affected_counties_pres_won` OR ≈ 0.82 (0.62–1.09, p = 0.18),
+`governor_vs_president` OR ≈ 1.15 (0.64–2.05, p = 0.64), and `months_to_next_election`
+OR ≈ 1.06 (p = 0.67).
+
+![Model 4 odds-ratio forest plot](figures/fig7_m4_forest.png)
+
+---
+
 ## Cross-model conclusion
 
 | Model | Question | Result |
@@ -225,8 +296,9 @@ county**" outweighs "**most counties favored him**" by ~3× (`max_pres_margin_af
 | **M1** — hierarchical logit | How large is the political effect, net of need? | Suggestive but **not robust** — conservative CIs cross OR=1 for nearly all political features |
 | **M2** — gradient boosting | Does state partisan alignment improve prediction? | **No** — ΔPR-AUC ≈ 0 (CI spans zero); need/severity dominate |
 | **M3** — + county composition | Does local stronghold composition help? | **No** — county lift is negative; "one strong county" > "most counties" but weak |
+| **M4** — simple logit | Which features matter most to the decision overall? | Request type, cost, and per-capita impact dominate the ranking; political features sit at the bottom and are **non-significant** — consistent with M1–M3 |
 
-Across three methods and two levels of analysis, the conclusion is consistent: **political alignment
+Across four methods and two levels of analysis, the conclusion is consistent: **political alignment
 has little *robust* effect on the PDA decision once disaster need and severity are accounted for.**
 Decisions are well-explained by cost and per-capita impact, not by who the requesting state or county
 voted for. The raw association (aligned jurisdictions denied less) is real in the unadjusted data but
