@@ -2,8 +2,8 @@
 """
 Title: scripts/plot_model_results.py — Chart generation for PDA model KPIs and outcomes.
 Description:
-    Computes fresh KPIs for the three PDA decision models by calling their
-    public API functions, then renders five publication-ready PNG charts to
+    Computes fresh KPIs for the PDA decision models by calling their
+    public API functions, then renders seven publication-ready PNG charts to
     docs/models/figures/. Mirrors the computation pattern in
     scripts/run_all_models.py.
 
@@ -20,6 +20,9 @@ Description:
         fig6_lay_effects.png        — lay-reader effects: Model 1 political &
                                       need factors as probability-point effects
                                       on the denial rate (estimate + range).
+        fig7_m4_forest.png          — forest plot: Model 4 odds ratios ordered
+                                      approval → denial, with per-row p-values and
+                                      direction arrows.
 
     Run:
         .venv/bin/python -m scripts.plot_model_results [--db data/pda.db]
@@ -30,6 +33,8 @@ Description:
 Changelog:
     2026-06-28  Initial version.
     2026-06-29  Add fig6 lay-reader effects helper + chart.
+    2026-06-30  fig7: order approval → denial, label rows with p-values + add
+                direction arrows, drop the "__missing" indicator rows.
 """
 
 import argparse
@@ -766,14 +771,35 @@ def plot_fig6_lay_effects(effects_df, baseline_p, out_dir):
 _M4_POLITICAL = {"governor_vs_president", "share_affected_counties_pres_won"}
 _M4_MUTED = "#888888"
 
+# Coefficients with a Wald p-value below this get a filled marker and a bold
+# label in fig7; weaker ones get an open marker and a greyed label.
+_M4_SIG_LEVEL = 0.05
+
+# Suffix of the median-imputation indicator columns excluded from fig7 (they are
+# data-hygiene flags, not substantive predictors of the decision).
+_M4_MISSING_SUFFIX = "__missing"
+
+# Direction-arrow colours under the fig7 axis: the outcome is "denied", so an
+# odds ratio below 1 pushes toward approval and above 1 pushes toward denial.
+_DIR_APPROVE = "#2E8B57"   # green — OR < 1
+_DIR_DENY = _RED           # red   — OR > 1
+
 
 def plot_fig7_m4_forest(table, out_dir):
-    """Horizontal forest plot: Model 4 odds ratios, ranked by effect magnitude.
+    """Horizontal forest plot: Model 4 odds ratios, ordered approval → denial.
 
-    One row per retained feature, sorted by |standardized coefficient| (largest at
-    top). LOG x-axis, reference line at OR=1. Political features are drawn in the
-    accent colour; need/request/structural features are muted grey. CI whiskers are
-    clipped to a sane visible range so the log scale does not explode.
+    One row per retained feature, ordered by the odds ratio so the column reads
+    top-to-bottom as a gradient from the most approval-leaning predictor (lowest
+    OR, top) to the most denial-leaning predictor (highest OR, bottom). The
+    outcome is "denied", so OR < 1 lowers the odds of denial (pushes toward
+    approval) and OR > 1 raises them (pushes toward denial); paired arrows under
+    the axis label that direction. Each row is annotated with its Wald p-value: a
+    filled marker plus a bold label marks a significant coefficient (p < 0.05) and
+    an open marker plus a greyed label a non-significant one. The median-imputation
+    "__missing" indicator columns are dropped (data-hygiene flags, not substantive
+    predictors). Political features use the accent colour, others muted grey. LOG
+    x-axis with a reference line at OR = 1 (no effect); CI whiskers are clipped to a
+    sane visible range so the log scale does not explode.
 
     Args:
         table (DataFrame): model4_simple_logit.odds_ratio_table output — indexed by
@@ -782,28 +808,69 @@ def plot_fig7_m4_forest(table, out_dir):
     Returns:
         None. Saves fig7_m4_forest.png to out_dir.
     """
-    ranked = table.reindex(table["std_coef"].abs().sort_values().index)
+    # Drop the missingness indicators, then order by signed effect: sorting
+    # std_coef descending puts the highest OR (most denial-leaning) at index 0,
+    # which matplotlib draws at the bottom, so the column reads approval → denial
+    # top-to-bottom and the markers fall on a top-left → bottom-right diagonal.
+    substantive = table.loc[
+        [f for f in table.index if not f.endswith(_M4_MISSING_SUFFIX)]
+    ]
+    ranked = substantive.sort_values("std_coef", ascending=False)
     n = len(ranked)
     y_pos = np.arange(n, dtype=float)
 
-    fig, ax = plt.subplots(figsize=(9, max(5, n * 0.45 + 1.8)))
+    fig, ax = plt.subplots(figsize=(10, max(5, n * 0.45 + 2.0)))
     for i, (feat, row) in enumerate(ranked.iterrows()):
         color = _BLUE if feat in _M4_POLITICAL else _M4_MUTED
+        significant = bool(row["p_value"] < _M4_SIG_LEVEL)
         lo = max(row["ci_low"], 0.05)
         hi = min(row["ci_high"], 20.0)
-        ax.plot(row["odds_ratio"], y_pos[i], "o", color=color, markersize=7, zorder=5)
+        # Filled marker = significant; open marker = not significant.
+        marker_kwargs = {"color": color, "markersize": 7, "zorder": 5}
+        if not significant:
+            marker_kwargs.update(markerfacecolor="none", markeredgewidth=1.5)
+        ax.plot(row["odds_ratio"], y_pos[i], "o", **marker_kwargs)
         ax.plot([lo, hi], [y_pos[i], y_pos[i]], color=color, linewidth=1.4, zorder=4)
         ax.plot([lo, lo], [y_pos[i] - 0.08, y_pos[i] + 0.08], color=color, lw=1.2)
         ax.plot([hi, hi], [y_pos[i] - 0.08, y_pos[i] + 0.08], color=color, lw=1.2)
+
+        # p-value label in a fixed column just outside the right spine.
+        p = float(row["p_value"])
+        p_text = "p<0.001" if p < 0.001 else f"p={p:.3f}"
+        ax.annotate(
+            p_text, xy=(1.015, y_pos[i]), xycoords=("axes fraction", "data"),
+            va="center", ha="left", fontsize=7.5,
+            color="#333" if significant else "#999",
+            fontweight="bold" if significant else "normal",
+        )
 
     ax.axvline(1.0, color="black", linewidth=1.5, linestyle="-", zorder=2)
     ax.set_xscale("log")
     ax.set_yticks(y_pos)
     ax.set_yticklabels(ranked.index, fontsize=9)
+    ax.set_ylim(-1.4, n - 0.3)   # headroom below row 0 for the direction arrows
     ax.set_xlabel("Odds Ratio (log scale)", fontsize=10)
     ax.set_title(
-        "Model 4 — what drives a PDA denial (simple logit, ranked by effect size)",
+        "Model 4 — what drives a PDA denial (simple logit, ordered approval → denial)",
         fontsize=11, fontweight="bold",
+    )
+
+    # Column header for the p-value labels, aligned just outside the right spine.
+    ax.annotate(
+        "p-value", xy=(1.015, 1.005), xycoords="axes fraction",
+        va="bottom", ha="left", fontsize=8, fontweight="bold", color="#333",
+    )
+
+    # Direction arrows along the bottom: which way each side of OR = 1 leans.
+    ax.annotate(
+        "◀ more likely APPROVED", xy=(0.02, -0.9),
+        xycoords=("axes fraction", "data"), ha="left", va="center",
+        fontsize=9, fontweight="bold", color=_DIR_APPROVE,
+    )
+    ax.annotate(
+        "more likely DENIED ▶", xy=(0.98, -0.9),
+        xycoords=("axes fraction", "data"), ha="right", va="center",
+        fontsize=9, fontweight="bold", color=_DIR_DENY,
     )
 
     political_handle = mlines.Line2D(
@@ -814,8 +881,19 @@ def plot_fig7_m4_forest(table, out_dir):
         [], [], color=_M4_MUTED, marker="o", linewidth=1.4, markersize=7,
         label="Need / request / structural",
     )
-    ax.legend(handles=[political_handle, other_handle], fontsize=8.5,
-              loc="lower right")
+    sig_handle = mlines.Line2D(
+        [], [], color="#555", marker="o", linewidth=0, markersize=7,
+        label="Significant (p < 0.05)",
+    )
+    nonsig_handle = mlines.Line2D(
+        [], [], color="#555", marker="o", linewidth=0, markersize=7,
+        markerfacecolor="none", markeredgewidth=1.5,
+        label="Not significant (p ≥ 0.05)",
+    )
+    ax.legend(
+        handles=[political_handle, other_handle, sig_handle, nonsig_handle],
+        fontsize=8, loc="upper right", framealpha=0.9,
+    )
     ax.grid(axis="x", alpha=0.25)
 
     fig.tight_layout()
